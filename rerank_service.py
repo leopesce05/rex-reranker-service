@@ -19,7 +19,7 @@ class RerankService:
         model_name: str = 'thebajajra/RexReranker-0.6B',
         max_length: int = 8192,
         gpu_memory_utilization: float = 0.8,
-        default_instruction: str = 'Given a web search query, retrieve relevant passages that answer the query'
+        default_instruction: str = 'Given a web search query in an ecommerce context, retrieve relevant passages that answer the query',
     ):
         self.model_name = model_name
         self.max_length = max_length
