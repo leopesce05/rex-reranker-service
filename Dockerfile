@@ -24,7 +24,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar código de la aplicación
-COPY main.py .
+COPY main.py models.py rerank_service.py routes.py .
 
 # Variables de entorno para optimización
 ENV PYTHONUNBUFFERED=1 \
