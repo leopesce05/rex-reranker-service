@@ -31,7 +31,9 @@ COPY main.py models.py rerank_service.py routes.py .
 # Variables de entorno para optimización
 ENV PYTHONUNBUFFERED=1 \
     TORCH_HOME=/app/models \
-    CUDA_VISIBLE_DEVICES=0
+    CUDA_VISIBLE_DEVICES=0 \
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512 \
+    TORCH_COMPILE_BACKEND=inductor
 
 # Crear directorio para modelos (cache)
 RUN mkdir -p /app/models

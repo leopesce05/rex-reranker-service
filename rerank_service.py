@@ -10,6 +10,13 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
+# Optimizaciones de CUDA para mejor rendimiento
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
 
 class OptimizedRexReranker:
     """
@@ -31,6 +38,21 @@ class OptimizedRexReranker:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
 
+        # Detectar capacidad de GPU para ajustar batch size dinámicamente
+        if self.device == "cuda":
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if gpu_memory_gb >= 24:
+                self.default_batch_size = 128
+            elif gpu_memory_gb >= 12:
+                self.default_batch_size = 96
+            elif gpu_memory_gb >= 8:
+                self.default_batch_size = 64
+            else:
+                self.default_batch_size = 48
+            logger.info(f"GPU detectada: {gpu_memory_gb:.1f}GB, batch_size={self.default_batch_size}")
+        else:
+            self.default_batch_size = 16
+
         self.tokenizer: Optional[AutoTokenizer] = None
         self.model: Optional[AutoModelForSequenceClassification] = None
         self._ready: bool = False
@@ -41,12 +63,17 @@ class OptimizedRexReranker:
             logger.info(
                 f"Inicializando OptimizedRexReranker con modelo '{self.model_name}' en dispositivo '{self.device}'"
             )
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                use_fast=True,
+                trust_remote_code=True,
+            )
 
             base_model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name,
                 torch_dtype=self.torch_dtype,
                 device_map=None,
+                trust_remote_code=True,
             )
 
             model = base_model.to(self.device)
@@ -74,24 +101,30 @@ class OptimizedRexReranker:
             raise
 
     def _warmup(self) -> None:
-        """Ejecuta una pasada de warmup para estabilizar compilación y gráficas."""
+        """Ejecuta múltiples pasadas de warmup para estabilizar compilación y CUDA kernels."""
         try:
             if self.tokenizer is None or self.model is None:
                 return
 
             dummy_query = "warmup query"
-            dummy_doc = "warmup document"
-            inputs = self.tokenizer(
-                [dummy_query],
-                [dummy_doc],
-                max_length=self.max_length,
-                padding=True,
-                truncation=True,
-                return_tensors="pt",
-            ).to(self.device)
+            dummy_docs = ["warmup document"] * min(8, self.default_batch_size)
+            
+            for _ in range(3):
+                inputs = self.tokenizer(
+                    [dummy_query] * len(dummy_docs),
+                    dummy_docs,
+                    max_length=self.max_length,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt",
+                ).to(self.device)
 
-            with torch.inference_mode():
-                _ = self.model(**inputs)
+                with torch.inference_mode():
+                    _ = self.model(**inputs)
+            
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+                
         except Exception as e:
             logger.warning(f"Error durante warmup (no crítico): {e}", exc_info=True)
 
@@ -170,7 +203,7 @@ class OptimizedRexReranker:
         self,
         query: str,
         documents: List[str],
-        batch_size: int = 64,
+        batch_size: Optional[int] = None,
         top_k: Optional[int] = None,
     ) -> List[Tuple[str, float, int]]:
         """
@@ -180,6 +213,9 @@ class OptimizedRexReranker:
         """
         if not documents:
             raise ValueError("La lista de documentos no puede estar vacía")
+
+        if batch_size is None:
+            batch_size = self.default_batch_size
 
         all_results: List[Tuple[str, float, int]] = []
 
@@ -193,6 +229,9 @@ class OptimizedRexReranker:
             for local_doc, score, local_idx in sub_results:
                 global_idx = start + local_idx
                 all_results.append((local_doc, score, global_idx))
+            
+            if self.device == "cuda" and (start + batch_size) % (batch_size * 4) == 0:
+                torch.cuda.empty_cache()
 
         # Orden global
         all_results.sort(key=lambda x: x[1], reverse=True)
@@ -223,11 +262,11 @@ class DynamicBatcher:
     def __init__(
         self,
         reranker: OptimizedRexReranker,
-        max_batch_size: int = 32,
+        max_batch_size: Optional[int] = None,
         max_wait_ms: int = 5,
     ) -> None:
         self.reranker = reranker
-        self.max_batch_size = max_batch_size
+        self.max_batch_size = max_batch_size or reranker.default_batch_size
         self.max_wait_ms = max_wait_ms
 
         self._queue: Deque[_BatchRequest] = deque()
@@ -345,7 +384,7 @@ class RerankService:
         self,
         model_name: str = "thebajajra/RexReranker-0.6B",
         max_length: int = 512,
-        max_batch_size: int = 32,
+        max_batch_size: Optional[int] = None,
         max_wait_ms: int = 5,
     ) -> None:
         self.model_name = model_name
