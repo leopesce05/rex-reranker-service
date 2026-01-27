@@ -1,5 +1,5 @@
 # Dockerfile optimizado para producción con GPU support
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
 
 WORKDIR /app
 
@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     git \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Crear symlink para python
@@ -32,14 +33,14 @@ ENV PYTHONUNBUFFERED=1 \
     CUDA_VISIBLE_DEVICES=0 \
     VLLM_USE_PRECOMPILED=1 \
     VLLM_GPU_MEMORY_UTILIZATION=0.8 \
-    VLLM_ATTENTION_BACKEND=flash_attn
+    VLLM_ATTENTION_BACKEND=FLASH_ATTN
 
 # Crear directorio para modelos (cache)
 RUN mkdir -p /app/models
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python3 -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Exponer puerto
 EXPOSE 8000
