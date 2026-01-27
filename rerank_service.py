@@ -1,205 +1,404 @@
+import asyncio
 import logging
-import math
-from typing import List, Dict, Optional, Tuple
+import time
+from collections import deque
+from dataclasses import dataclass
+from typing import Deque, List, Optional, Tuple
 
 import torch
-from transformers import AutoTokenizer
-from vllm import LLM, SamplingParams
-from vllm.distributed.parallel_state import destroy_model_parallel
-from vllm.inputs.data import TokensPrompt
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
 
-class RerankService:
-    """Servicio para manejar el reranking de documentos usando vLLM."""
-    
+class OptimizedRexReranker:
+    """
+    Reranker de clasificación optimizado para producción.
+
+    - Usa AutoModelForSequenceClassification + AutoTokenizer
+    - FP16 en GPU cuando está disponible
+    - `torch.compile` para reducir overhead cuando está disponible (torch>=2.0)
+    """
+
     def __init__(
         self,
-        model_name: str = 'thebajajra/RexReranker-0.6B',
-        max_length: int = 8192,
-        gpu_memory_utilization: float = 0.8,
-        default_instruction: str = 'Given a web search query in an ecommerce context, retrieve relevant passages that answer the query',
-    ):
+        model_name: str = "thebajajra/RexReranker-0.6B",
+        max_length: int = 512,
+    ) -> None:
         self.model_name = model_name
         self.max_length = max_length
-        self.gpu_memory_utilization = gpu_memory_utilization
-        self.default_instruction = default_instruction
-        
-        self.model: Optional[LLM] = None
+
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
+
         self.tokenizer: Optional[AutoTokenizer] = None
-        self.sampling_params: Optional[SamplingParams] = None
-        self.true_token: Optional[int] = None
-        self.false_token: Optional[int] = None
-        self.suffix_tokens: List[int] = []
-    
-    def initialize(self):
-        """Inicializa el modelo vLLM y el tokenizer."""
+        self.model: Optional[AutoModelForSequenceClassification] = None
+        self._ready: bool = False
+
+    def initialize(self) -> None:
+        """Carga modelo y tokenizer, aplica `torch.compile` y hace warmup."""
         try:
-            logger.info("Inicializando tokenizer...")
+            logger.info(
+                f"Inicializando OptimizedRexReranker con modelo '{self.model_name}' en dispositivo '{self.device}'"
+            )
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.tokenizer.padding_side = "left"
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-            
-            # Configurar tokens y parámetros
-            suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-            self.suffix_tokens = self.tokenizer.encode(suffix, add_special_tokens=False)
-            self.true_token = self.tokenizer("yes", add_special_tokens=False).input_ids[0]
-            self.false_token = self.tokenizer("no", add_special_tokens=False).input_ids[0]
-            
-            self.sampling_params = SamplingParams(
-                temperature=0,
-                max_tokens=1,
-                logprobs=20,
-                allowed_token_ids=[self.true_token, self.false_token],
+
+            base_model = AutoModelForSequenceClassification.from_pretrained(
+                self.model_name,
+                torch_dtype=self.torch_dtype,
+                device_map=None,
             )
-            
-            logger.info("Inicializando modelo vLLM...")
-            number_of_gpu = torch.cuda.device_count()
-            logger.info(f"GPUs detectadas: {number_of_gpu}")
-            
-            self.model = LLM(
-                model=self.model_name,
-                tensor_parallel_size=number_of_gpu,
-                max_model_len=10000,
-                enable_prefix_caching=True,
-                gpu_memory_utilization=self.gpu_memory_utilization
-            )
-            
-            logger.info("Modelo vLLM inicializado exitosamente")
-            
+
+            model = base_model.to(self.device)
+
+            # Aplicar torch.compile si está disponible
+            if hasattr(torch, "compile"):
+                try:
+                    logger.info("Aplicando torch.compile(mode='reduce-overhead')...")
+                    model = torch.compile(model, mode="reduce-overhead")  # type: ignore[attr-defined]
+                except Exception as compile_err:
+                    logger.warning(
+                        f"No se pudo compilar el modelo con torch.compile: {compile_err}"
+                    )
+
+            self.model = model.eval()
+
+            # Warmup: una pasada rápida para que el modelo compilado quede listo
+            self._warmup()
+
+            self._ready = True
+            logger.info("OptimizedRexReranker inicializado y listo para uso")
         except Exception as e:
-            logger.error(f"Error al inicializar el modelo: {str(e)}")
+            logger.error(f"Error al inicializar OptimizedRexReranker: {e}", exc_info=True)
+            self._ready = False
             raise
-    
-    def cleanup(self):
-        """Limpia los recursos del modelo."""
+
+    def _warmup(self) -> None:
+        """Ejecuta una pasada de warmup para estabilizar compilación y gráficas."""
         try:
-            if self.model is not None:
-                logger.info("Limpiando recursos del modelo...")
-                destroy_model_parallel()
-                del self.model
-                self.model = None
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                logger.info("Recursos limpiados exitosamente")
+            if self.tokenizer is None or self.model is None:
+                return
+
+            dummy_query = "warmup query"
+            dummy_doc = "warmup document"
+            inputs = self.tokenizer(
+                [dummy_query],
+                [dummy_doc],
+                max_length=self.max_length,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.device)
+
+            with torch.inference_mode():
+                _ = self.model(**inputs)
         except Exception as e:
-            logger.error(f"Error al limpiar recursos: {str(e)}")
-    
+            logger.warning(f"Error durante warmup (no crítico): {e}", exc_info=True)
+
     def is_ready(self) -> bool:
-        """Verifica si el servicio está listo para procesar requests."""
-        return self.model is not None and self.tokenizer is not None
-    
-    def format_instruction(self, instruction: str, query: str, doc: str) -> List[Dict[str, str]]:
-        """Formatea la instrucción en el formato de chat esperado por el modelo."""
-        text = [
-            {
-                "role": "system",
-                "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."
-            },
-            {
-                "role": "user",
-                "content": f"<Instruct>: {instruction}\n\n<Query>: {query}\n\n<Document>: {doc}"
-            }
-        ]
-        return text
-    
-    def process_inputs(
-        self,
-        pairs: List[Tuple[str, str]],
-        instruction: str
-    ) -> List[TokensPrompt]:
-        """Procesa los pares query-documento y los convierte en TokensPrompt."""
-        messages = [self.format_instruction(instruction, query, doc) for query, doc in pairs]
-        messages = self.tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=False, enable_thinking=False
-        )
-        max_token_length = self.max_length - len(self.suffix_tokens)
-        messages = [ele[:max_token_length] + self.suffix_tokens for ele in messages]
-        messages = [TokensPrompt(prompt_token_ids=ele) for ele in messages]
-        return messages
-    
-    def compute_logits(self, messages: List[TokensPrompt]) -> List[float]:
-        """Calcula los scores de relevancia usando los logits de los tokens yes/no."""
+        return self._ready and self.model is not None and self.tokenizer is not None
+
+    def _score_pairs(
+        self, query: str, documents: List[str]
+    ) -> List[float]:
+        """Devuelve un score por cada documento dado un query."""
         if not self.is_ready():
-            raise RuntimeError("El servicio no está inicializado")
-        
-        outputs = self.model.generate(messages, self.sampling_params, use_tqdm=False)
-        scores = []
-        
-        for i in range(len(outputs)):
-            final_logits = outputs[i].outputs[0].logprobs[-1]
-            
-            if self.true_token not in final_logits:
-                true_logit = -10
-            else:
-                true_logit = final_logits[self.true_token].logprob
-            
-            if self.false_token not in final_logits:
-                false_logit = -10
-            else:
-                false_logit = final_logits[self.false_token].logprob
-            
-            true_score = math.exp(true_logit)
-            false_score = math.exp(false_logit)
-            score = true_score / (true_score + false_score)
-            scores.append(score)
-        
+            raise RuntimeError("El reranker no está inicializado")
+
+        assert self.model is not None
+        assert self.tokenizer is not None
+
+        queries = [query] * len(documents)
+
+        inputs = self.tokenizer(
+            queries,
+            documents,
+            max_length=self.max_length,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        ).to(self.device)
+
+        with torch.inference_mode():
+            outputs = self.model(**inputs)
+            logits = outputs.logits
+
+        # Asumimos que mayor logit => mayor relevancia
+        # Si el modelo es binario, usamos la prob de la clase positiva (índice 1)
+        if logits.shape[-1] == 1:
+            scores = logits.squeeze(-1).float().cpu().tolist()
+        else:
+            # Probabilidad de la clase con mayor logit
+            probs = torch.softmax(logits, dim=-1)
+            # Usar la probabilidad de la clase positiva (índice 1) si existe
+            idx = 1 if probs.shape[-1] > 1 else 0
+            scores = probs[:, idx].float().cpu().tolist()
+
         return scores
-    
-    def rerank(
+
+    def rerank_batch(
         self,
         query: str,
         documents: List[str],
-        instruction: Optional[str] = None,
-        top_k: Optional[int] = None
-    ) -> Tuple[List[Tuple[str, float, int]], str]:
+        return_sorted: bool = True,
+        top_k: Optional[int] = None,
+    ) -> List[Tuple[str, float, int]]:
         """
-        Rerankea documentos basado en una query.
-        
-        Args:
-            query: La query de búsqueda
-            documents: Lista de documentos a rerankear
-            instruction: Instrucción personalizada (opcional)
-            top_k: Número de resultados a retornar (opcional)
-        
-        Returns:
-            Tupla con (resultados, instruction_usada)
-            resultados: Lista de tuplas (documento, score, índice_original)
+        Rerankea un batch de documentos para un único query.
+
+        Devuelve lista de tuplas (documento, score, índice_original).
+        """
+        if not documents:
+            raise ValueError("La lista de documentos no puede estar vacía")
+
+        scores = self._score_pairs(query, documents)
+
+        results: List[Tuple[str, float, int]] = [
+            (doc, float(score), idx)
+            for idx, (doc, score) in enumerate(zip(documents, scores))
+        ]
+
+        if return_sorted:
+            results.sort(key=lambda x: x[1], reverse=True)
+
+        if top_k is not None and top_k > 0:
+            results = results[:top_k]
+
+        return results
+
+    def rerank_large_batch(
+        self,
+        query: str,
+        documents: List[str],
+        batch_size: int = 64,
+        top_k: Optional[int] = None,
+    ) -> List[Tuple[str, float, int]]:
+        """
+        Maneja listas grandes dividiéndolas en sub-batches.
+
+        El top_k se aplica sobre el conjunto completo de resultados.
+        """
+        if not documents:
+            raise ValueError("La lista de documentos no puede estar vacía")
+
+        all_results: List[Tuple[str, float, int]] = []
+
+        for start in range(0, len(documents), batch_size):
+            end = min(start + batch_size, len(documents))
+            sub_docs = documents[start:end]
+            sub_results = self.rerank_batch(
+                query, sub_docs, return_sorted=False
+            )
+            # Ajustar índices al índice global original
+            for local_doc, score, local_idx in sub_results:
+                global_idx = start + local_idx
+                all_results.append((local_doc, score, global_idx))
+
+        # Orden global
+        all_results.sort(key=lambda x: x[1], reverse=True)
+
+        if top_k is not None and top_k > 0:
+            all_results = all_results[:top_k]
+
+        return all_results
+
+
+@dataclass
+class _BatchRequest:
+    query: str
+    documents: List[str]
+    top_k: Optional[int]
+    future: "asyncio.Future[Tuple[List[Tuple[str, float, int]], float]]"
+    start_time: float
+
+
+class DynamicBatcher:
+    """
+    Batcher sencillo basado en cola para agrupar requests.
+
+    Nota: actualmente procesa cada request de forma secuencial dentro del batch,
+    pero la capa permite evolucionar a batching real de modelo en el futuro.
+    """
+
+    def __init__(
+        self,
+        reranker: OptimizedRexReranker,
+        max_batch_size: int = 32,
+        max_wait_ms: int = 5,
+    ) -> None:
+        self.reranker = reranker
+        self.max_batch_size = max_batch_size
+        self.max_wait_ms = max_wait_ms
+
+        self._queue: Deque[_BatchRequest] = deque()
+        self._lock = asyncio.Lock()
+        self._task: Optional[asyncio.Task] = None
+        self._running = False
+
+    def start(self) -> None:
+        if self._running:
+            return
+        loop = asyncio.get_event_loop()
+        self._running = True
+        self._task = loop.create_task(self._process_queue())
+        logger.info(
+            f"DynamicBatcher iniciado (max_batch_size={self.max_batch_size}, max_wait_ms={self.max_wait_ms})"
+        )
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    async def add_request(
+        self,
+        query: str,
+        documents: List[str],
+        top_k: Optional[int],
+    ) -> Tuple[List[Tuple[str, float, int]], float]:
+        """
+        Encola una request y devuelve (resultados, latency_ms).
+        """
+        loop = asyncio.get_event_loop()
+        future: "asyncio.Future[Tuple[List[Tuple[str, float, int]], float]]" = loop.create_future()
+        req = _BatchRequest(
+            query=query,
+            documents=list(documents),
+            top_k=top_k,
+            future=future,
+            start_time=time.perf_counter(),
+        )
+
+        async with self._lock:
+            self._queue.append(req)
+
+        return await future
+
+    async def _process_queue(self) -> None:
+        """Bucle principal que agrupa y procesa requests."""
+        try:
+            while self._running:
+                batch: List[_BatchRequest] = []
+
+                async with self._lock:
+                    if not self._queue:
+                        # Nada que procesar, dormir un poco
+                        pass
+                    else:
+                        # Tomar al menos una request
+                        first_req = self._queue.popleft()
+                        batch.append(first_req)
+
+                        # Intentar acumular más hasta max_batch_size o max_wait_ms
+                        start_wait = time.perf_counter()
+                        while (
+                            len(batch) < self.max_batch_size
+                            and self._queue
+                            and (time.perf_counter() - start_wait) * 1000
+                            < self.max_wait_ms
+                        ):
+                            batch.append(self._queue.popleft())
+
+                if not batch:
+                    await asyncio.sleep(0.001)
+                    continue
+
+                # Procesar cada request en el batch (secuencialmente por simplicidad)
+                for req in batch:
+                    try:
+                        results = self.reranker.rerank_large_batch(
+                            req.query,
+                            req.documents,
+                            batch_size=self.max_batch_size,
+                            top_k=req.top_k,
+                        )
+                        latency_ms = (time.perf_counter() - req.start_time) * 1000.0
+                        if not req.future.done():
+                            req.future.set_result((results, latency_ms))
+                    except Exception as e:
+                        logger.error(
+                            f"Error procesando request en DynamicBatcher: {e}",
+                            exc_info=True,
+                        )
+                        if not req.future.done():
+                            req.future.set_exception(e)
+
+                # Pequeña pausa para ceder control al event loop
+                await asyncio.sleep(0.0)
+        except asyncio.CancelledError:
+            logger.info("DynamicBatcher detenido")
+
+
+class RerankService:
+    """
+    Fachada de alto nivel para el servicio de reranking.
+
+    Expone una API sencilla usada por FastAPI, delegando en
+    `OptimizedRexReranker` + `DynamicBatcher`.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "thebajajra/RexReranker-0.6B",
+        max_length: int = 512,
+        max_batch_size: int = 32,
+        max_wait_ms: int = 5,
+    ) -> None:
+        self.model_name = model_name
+        self._reranker = OptimizedRexReranker(
+            model_name=model_name,
+            max_length=max_length,
+        )
+        self._batcher = DynamicBatcher(
+            reranker=self._reranker,
+            max_batch_size=max_batch_size,
+            max_wait_ms=max_wait_ms,
+        )
+
+    def initialize(self) -> None:
+        """Inicializa el modelo y arranca el batcher."""
+        self._reranker.initialize()
+        self._batcher.start()
+
+    async def shutdown(self) -> None:
+        """Detiene el batcher y libera memoria de GPU."""
+        await self._batcher.stop()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def is_ready(self) -> bool:
+        """Indica si el servicio está listo para procesar requests."""
+        return self._reranker.is_ready()
+
+    async def rerank_async(
+        self,
+        query: str,
+        documents: List[str],
+        top_k: Optional[int] = None,
+    ) -> Tuple[List[Tuple[str, float, int]], float]:
+        """
+        Punto de entrada principal usado por las rutas FastAPI.
+
+        Devuelve (resultados, latency_ms).
         """
         if not self.is_ready():
             raise RuntimeError("El servicio no está inicializado")
-        
+
         if not documents:
             raise ValueError("La lista de documentos no puede estar vacía")
-        
-        # Usar instruction personalizada o la por defecto
-        instruction_used = instruction if instruction else self.default_instruction
-        
-        # Crear pares query-documento
-        pairs = [(query, doc) for doc in documents]
-        
-        # Procesar inputs
-        inputs = self.process_inputs(pairs, instruction_used)
-        
-        # Calcular scores
-        logger.info(f"Procesando {len(pairs)} pares query-documento")
-        scores = self.compute_logits(inputs)
-        
-        # Crear resultados con scores e índices
-        results = [
-            (doc, score, idx)
-            for idx, (doc, score) in enumerate(zip(documents, scores))
-        ]
-        
-        # Ordenar por score descendente
-        results.sort(key=lambda x: x[1], reverse=True)
-        
-        # Aplicar top_k si se especifica
-        if top_k is not None and top_k > 0:
-            results = results[:top_k]
-        
-        logger.info(f"Reranking completado. Top score: {results[0][1] if results else 0:.4f}")
-        
-        return results, instruction_used
+
+        results, latency_ms = await self._batcher.add_request(
+            query=query,
+            documents=documents,
+            top_k=top_k,
+        )
+        logger.info(
+            f"Reranking completado. Documentos={len(documents)}, top_k={top_k}, "
+            f"latencia={latency_ms:.2f} ms"
+        )
+        return results, latency_ms
 

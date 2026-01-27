@@ -7,7 +7,6 @@ class RerankRequest(BaseModel):
     query: str
     documents: List[str]
     top_k: Optional[int] = None
-    instruction: Optional[str] = None
 
 
 class DocumentScore(BaseModel):
@@ -21,7 +20,7 @@ class RerankResponse(BaseModel):
     """Response model para el endpoint de reranking."""
     query: str
     results: List[DocumentScore]
-    instruction: str
+    latency_ms: float
 
 
 class HealthResponse(BaseModel):

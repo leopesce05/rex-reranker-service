@@ -17,13 +17,14 @@ rerank_service = RerankService()
 
 # Crear aplicación FastAPI
 app = FastAPI(
-    title="vLLM Reranker API",
-    description="API para reranking de documentos usando RexReranker-0.6B con vLLM",
-    version="1.0.0"
+    title="RexReranker API",
+    description="API para reranking de documentos usando RexReranker optimizado (FP16 + torch.compile)",
+    version="1.0.0",
 )
 
 # Inyectar el servicio en las rutas
 from routes import set_rerank_service
+
 set_rerank_service(rerank_service)
 
 # Registrar rutas
@@ -32,9 +33,9 @@ app.include_router(router)
 
 @app.on_event("startup")
 async def startup_event():
-    """Inicializa el modelo vLLM al arrancar la aplicación."""
+    """Inicializa el modelo optimizado al arrancar la aplicación."""
     try:
-        logger.info("Iniciando servicio de reranking...")
+        logger.info("Iniciando servicio de reranking optimizado...")
         rerank_service.initialize()
         logger.info("Aplicación lista para recibir requests")
     except Exception as e:
@@ -47,7 +48,7 @@ async def shutdown_event():
     """Limpia recursos al cerrar la aplicación."""
     try:
         logger.info("Cerrando aplicación...")
-        rerank_service.cleanup()
+        await rerank_service.shutdown()
         gc.collect()
         logger.info("Aplicación cerrada correctamente")
     except Exception as e:

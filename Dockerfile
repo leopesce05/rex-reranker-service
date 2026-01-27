@@ -21,8 +21,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # Copiar requirements primero para aprovechar cache de Docker
 COPY requirements.txt .
 
-# Instalar dependencias de Python
-RUN pip install --no-cache-dir -r requirements.txt
+# Instalar PyTorch con soporte CUDA 12.1 y luego el resto de dependencias
+RUN pip install --no-cache-dir torch==2.1.0+cu121 --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copiar código de la aplicación
 COPY main.py models.py rerank_service.py routes.py .
@@ -30,10 +31,7 @@ COPY main.py models.py rerank_service.py routes.py .
 # Variables de entorno para optimización
 ENV PYTHONUNBUFFERED=1 \
     TORCH_HOME=/app/models \
-    CUDA_VISIBLE_DEVICES=0 \
-    VLLM_USE_PRECOMPILED=1 \
-    VLLM_GPU_MEMORY_UTILIZATION=0.8 \
-    VLLM_ATTENTION_BACKEND=FLASH_ATTN
+    CUDA_VISIBLE_DEVICES=0
 
 # Crear directorio para modelos (cache)
 RUN mkdir -p /app/models
