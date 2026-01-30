@@ -95,10 +95,14 @@ async def health_check() -> HealthResponse:
 @router.get("/")
 async def root():
     """Endpoint raíz con información de la API."""
+    try:
+        model_name = get_rerank_service().model_name
+    except RuntimeError:
+        model_name = "thebajajra/RexReranker-large"
     return {
         "name": "Optimized RexReranker API",
         "version": "1.0.0",
-        "model": "thebajajra/RexReranker-0.6B",
+        "model": model_name,
         "endpoints": {
             "rerank": "/rerank",
             "health": "/health",

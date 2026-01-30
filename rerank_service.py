@@ -10,35 +10,37 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
-# Optimizaciones de CUDA para mejor rendimiento
+# Optimizaciones CUDA para GPUs NVIDIA en producción
 if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = False
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
+# Formato oficial RexReranker (HF): Text A = "Query: {query}", Text B = documento (ej. "Title: ...\nDescription: ...")
+QUERY_PREFIX = "Query: "
+
 
 class OptimizedRexReranker:
     """
-    Reranker de clasificación optimizado para producción.
+    RexReranker optimizado para producción con GPUs NVIDIA.
 
-    - Usa AutoModelForSequenceClassification + AutoTokenizer
-    - FP16 en GPU cuando está disponible
-    - `torch.compile` para reducir overhead cuando está disponible (torch>=2.0)
+    - AutoModelForSequenceClassification + formato oficial: "Query: {query}" / documento.
+    - FP16 en GPU, torch.compile, batching.
+    - Compatible con RexReranker-base y modelos con la misma API (score = logits.squeeze(-1)).
     """
 
     def __init__(
         self,
-        model_name: str = "thebajajra/RexReranker-0.6B",
-        max_length: int = 512,
+        model_name: str = "thebajajra/RexReranker-base",
+        max_length: Optional[int] = None,
     ) -> None:
         self.model_name = model_name
-        self.max_length = max_length
+        self.max_length = max_length  # Si None, se usa model.config.max_position_embeddings (capped 7999)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
 
-        # Detectar capacidad de GPU para ajustar batch size dinámicamente
         if self.device == "cuda":
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             if gpu_memory_gb >= 24:
@@ -55,10 +57,11 @@ class OptimizedRexReranker:
 
         self.tokenizer: Optional[AutoTokenizer] = None
         self.model: Optional[AutoModelForSequenceClassification] = None
+        self._effective_max_length: int = 512
         self._ready: bool = False
 
     def initialize(self) -> None:
-        """Carga modelo y tokenizer, aplica `torch.compile` y hace warmup."""
+        """Carga modelo y tokenizer, aplica optimizaciones y warmup."""
         try:
             logger.info(
                 f"Inicializando OptimizedRexReranker con modelo '{self.model_name}' en dispositivo '{self.device}'"
@@ -76,47 +79,42 @@ class OptimizedRexReranker:
                 trust_remote_code=True,
             )
 
-            # Configurar padding token si no existe (necesario para batches)
+            # max_length: del config del modelo, capped a 7999 como en la doc oficial
+            max_pos = getattr(
+                base_model.config,
+                "max_position_embeddings",
+                512,
+            )
+            cap = min(int(max_pos), 7999)
+            self._effective_max_length = self.max_length if self.max_length is not None else cap
+            self._effective_max_length = min(self._effective_max_length, cap)
+            logger.info(f"max_length efectivo: {self._effective_max_length}")
+
             if self.tokenizer.pad_token is None:
-                # Usar eos_token como pad_token si existe, sino usar unk_token
                 if self.tokenizer.eos_token is not None:
                     self.tokenizer.pad_token = self.tokenizer.eos_token
                 elif self.tokenizer.unk_token is not None:
                     self.tokenizer.pad_token = self.tokenizer.unk_token
                 else:
-                    # Si no hay ninguno, agregar un token especial y redimensionar el modelo
-                    self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-                    # Redimensionar el embedding del modelo para incluir el nuevo token
+                    self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
                     base_model.resize_token_embeddings(len(self.tokenizer))
-                
-                # Asegurar que pad_token_id esté configurado
                 if self.tokenizer.pad_token_id is None:
-                    self.tokenizer.pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else self.tokenizer.unk_token_id
-                
-                logger.info(f"Padding token configurado: '{self.tokenizer.pad_token}' (ID: {self.tokenizer.pad_token_id})")
-            
-            # Asegurar que el modelo también tenga el pad_token_id configurado
-            if hasattr(base_model.config, 'pad_token_id') and base_model.config.pad_token_id is None:
-                base_model.config.pad_token_id = self.tokenizer.pad_token_id
-                logger.info(f"Modelo config.pad_token_id actualizado: {base_model.config.pad_token_id}")
+                    self.tokenizer.pad_token_id = (
+                        self.tokenizer.eos_token_id or self.tokenizer.unk_token_id
+                    )
+                logger.info(f"Padding token: '{self.tokenizer.pad_token}' (ID: {self.tokenizer.pad_token_id})")
 
             model = base_model.to(self.device)
 
-            # Aplicar torch.compile si está disponible
             if hasattr(torch, "compile"):
                 try:
                     logger.info("Aplicando torch.compile(mode='reduce-overhead')...")
                     model = torch.compile(model, mode="reduce-overhead")  # type: ignore[attr-defined]
                 except Exception as compile_err:
-                    logger.warning(
-                        f"No se pudo compilar el modelo con torch.compile: {compile_err}"
-                    )
+                    logger.warning(f"No se pudo compilar con torch.compile: {compile_err}")
 
             self.model = model.eval()
-
-            # Warmup: una pasada rápida para que el modelo compilado quede listo
             self._warmup()
-
             self._ready = True
             logger.info("OptimizedRexReranker inicializado y listo para uso")
         except Exception as e:
@@ -125,72 +123,57 @@ class OptimizedRexReranker:
             raise
 
     def _warmup(self) -> None:
-        """Ejecuta múltiples pasadas de warmup para estabilizar compilación y CUDA kernels."""
+        """Warmup para compilación y kernels CUDA."""
         try:
             if self.tokenizer is None or self.model is None:
                 return
-
             dummy_query = "warmup query"
             dummy_docs = ["warmup document"] * min(8, self.default_batch_size)
-            
             for _ in range(3):
                 inputs = self.tokenizer(
-                    [dummy_query] * len(dummy_docs),
+                    [f"{QUERY_PREFIX}{dummy_query}"] * len(dummy_docs),
                     dummy_docs,
-                    max_length=self.max_length,
-                    padding=True,
-                    truncation=True,
                     return_tensors="pt",
+                    truncation=True,
+                    max_length=self._effective_max_length,
+                    padding=True,
                 ).to(self.device)
-
                 with torch.inference_mode():
                     _ = self.model(**inputs)
-            
             if self.device == "cuda":
                 torch.cuda.empty_cache()
-                
         except Exception as e:
             logger.warning(f"Error durante warmup (no crítico): {e}", exc_info=True)
 
     def is_ready(self) -> bool:
         return self._ready and self.model is not None and self.tokenizer is not None
 
-    def _score_pairs(
-        self, query: str, documents: List[str]
-    ) -> List[float]:
-        """Devuelve un score por cada documento dado un query."""
+    def _score_pairs(self, query: str, documents: List[str]) -> List[float]:
+        """Devuelve un score por documento (formato oficial: Query: {query} / doc, score = logits.squeeze(-1))."""
         if not self.is_ready():
             raise RuntimeError("El reranker no está inicializado")
-
         assert self.model is not None
         assert self.tokenizer is not None
 
-        queries = [query] * len(documents)
+        query_text = f"{QUERY_PREFIX}{query}"
+        pairs_text_a = [query_text] * len(documents)
+        pairs_text_b = list(documents)
 
         inputs = self.tokenizer(
-            queries,
-            documents,
-            max_length=self.max_length,
-            padding=True,
-            truncation=True,
+            pairs_text_a,
+            pairs_text_b,
             return_tensors="pt",
+            truncation=True,
+            max_length=self._effective_max_length,
+            padding=True,
         ).to(self.device)
 
         with torch.inference_mode():
             outputs = self.model(**inputs)
-            logits = outputs.logits
-
-        # Asumimos que mayor logit => mayor relevancia
-        # Si el modelo es binario, usamos la prob de la clase positiva (índice 1)
-        if logits.shape[-1] == 1:
-            scores = logits.squeeze(-1).float().cpu().tolist()
-        else:
-            # Probabilidad de la clase con mayor logit
-            probs = torch.softmax(logits, dim=-1)
-            # Usar la probabilidad de la clase positiva (índice 1) si existe
-            idx = 1 if probs.shape[-1] > 1 else 0
-            scores = probs[:, idx].float().cpu().tolist()
-
+            # Formato oficial RexReranker: score por batch
+            scores = outputs.logits.squeeze(-1).float().cpu().tolist()
+        if isinstance(scores, float):
+            scores = [scores]
         return scores
 
     def rerank_batch(
@@ -406,8 +389,8 @@ class RerankService:
 
     def __init__(
         self,
-        model_name: str = "thebajajra/RexReranker-0.6B",
-        max_length: int = 512,
+        model_name: str = "thebajajra/RexReranker-base",
+        max_length: Optional[int] = 512,
         max_batch_size: Optional[int] = None,
         max_wait_ms: int = 5,
     ) -> None:
