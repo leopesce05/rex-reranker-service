@@ -1,0 +1,13 @@
+{
+  "name": "rex-reranker-load-test",
+  "version": "1.0.0",
+  "description": "Load test script for RexReranker API",
+  "main": "load_test.js",
+  "scripts": {
+    "test": "node load_test.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
+

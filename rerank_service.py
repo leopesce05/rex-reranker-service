@@ -76,6 +76,30 @@ class OptimizedRexReranker:
                 trust_remote_code=True,
             )
 
+            # Configurar padding token si no existe (necesario para batches)
+            if self.tokenizer.pad_token is None:
+                # Usar eos_token como pad_token si existe, sino usar unk_token
+                if self.tokenizer.eos_token is not None:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+                elif self.tokenizer.unk_token is not None:
+                    self.tokenizer.pad_token = self.tokenizer.unk_token
+                else:
+                    # Si no hay ninguno, agregar un token especial y redimensionar el modelo
+                    self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+                    # Redimensionar el embedding del modelo para incluir el nuevo token
+                    base_model.resize_token_embeddings(len(self.tokenizer))
+                
+                # Asegurar que pad_token_id esté configurado
+                if self.tokenizer.pad_token_id is None:
+                    self.tokenizer.pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else self.tokenizer.unk_token_id
+                
+                logger.info(f"Padding token configurado: '{self.tokenizer.pad_token}' (ID: {self.tokenizer.pad_token_id})")
+            
+            # Asegurar que el modelo también tenga el pad_token_id configurado
+            if hasattr(base_model.config, 'pad_token_id') and base_model.config.pad_token_id is None:
+                base_model.config.pad_token_id = self.tokenizer.pad_token_id
+                logger.info(f"Modelo config.pad_token_id actualizado: {base_model.config.pad_token_id}")
+
             model = base_model.to(self.device)
 
             # Aplicar torch.compile si está disponible

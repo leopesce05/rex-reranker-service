@@ -21,9 +21,13 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # Copiar requirements primero para aprovechar cache de Docker
 COPY requirements.txt .
 
-# Instalar PyTorch con soporte CUDA 12.1 y luego el resto de dependencias
-RUN pip install --no-cache-dir torch==2.1.0+cu121 --index-url https://download.pytorch.org/whl/cu121 && \
-    pip install --no-cache-dir -r requirements.txt
+# Instalar dependencias desde requirements.txt
+# PyTorch se instala desde índice específico con soporte CUDA 12.1
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -r requirements.txt
+
+# Verificar que PyTorch se instaló correctamente (CUDA puede no estar disponible durante build)
+RUN python -c "import torch; print(f'PyTorch {torch.__version__} instalado correctamente'); print(f'Versión CUDA en PyTorch: {torch.version.cuda}'); print(f'CUDA disponible durante build: {torch.cuda.is_available()} (normal que sea False)')" || exit 1
 
 # Copiar código de la aplicación
 COPY main.py models.py rerank_service.py routes.py .
