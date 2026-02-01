@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 // URL del servidor
-const SERVER_URL = process.env.SERVER_URL || 'https://8d7abe464a2l51-8000.proxy.runpod.net/rerank';
+const SERVER_URL = process.env.SERVER_URL || 'https://nh88vk2e8jxgd4-8000.proxy.runpod.net/rerank';
 
 // Lista grande de documentos de ecommerce (100+ documentos)
 const DOCUMENTS_POOL = [
