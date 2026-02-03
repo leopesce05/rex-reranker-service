@@ -2,7 +2,7 @@ import logging
 import gc
 
 from fastapi import FastAPI
-from rerank_service import RerankService
+from rerank_service_generative import RerankService
 from routes import router
 
 # Configurar logging

@@ -4,7 +4,7 @@ import torch
 from fastapi import APIRouter, HTTPException
 
 from models import DocumentScore, HealthResponse, RerankRequest, RerankResponse
-from rerank_service import RerankService
+from rerank_service_generative import RerankService
 
 logger = logging.getLogger(__name__)
 
