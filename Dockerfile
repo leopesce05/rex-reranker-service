@@ -29,11 +29,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Verificar que PyTorch se instaló correctamente (CUDA puede no estar disponible durante build)
 RUN python -c "import torch; print(f'PyTorch {torch.__version__} instalado correctamente'); print(f'Versión CUDA en PyTorch: {torch.version.cuda}'); print(f'CUDA disponible durante build: {torch.cuda.is_available()} (normal que sea False)')" || exit 1
 
-RUN pip install --no-cache-dir psutil ninja
-
-# Agregamos --no-build-isolation para usar las librerías que ya instalamos arriba
-RUN pip install --no-cache-dir flash-attn --no-build-isolation \
-    --find-links https://dao-ailab.github.io/flash-attention/whl/
+RUN pip install --no-cache-dir \
+    flash-attn==2.8.3 \
+    --no-build-isolation
 
 # Copiar código de la aplicación (asegúrate de que el destino sea un directorio)
 COPY main.py models.py rerank_service_generative.py rerank_service.py routes.py ./
