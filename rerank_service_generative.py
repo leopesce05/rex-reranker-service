@@ -87,13 +87,21 @@ class OptimizedRexReranker:
             
             # Cargar modelo
             logger.info("Cargando modelo CausalLM...")
+            # Hacer flash_attention_2 opcional si está instalada
+            attn_impl = "eager"
+            if self.device == "cuda":
+                try:
+                    __import__("flash_attn")
+                    attn_impl = "flash_attention_2"
+                    logger.info("flash-attn disponible, usando flash_attention_2")
+                except ImportError:
+                    logger.info("flash-attn no instalado, usando attn_implementation='eager'")
             base_model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 dtype=self.torch_dtype,
                 trust_remote_code=True,
-                attn_implementation="flash_attention_2" if self.device == "cuda" else "eager",
+                attn_implementation=attn_impl,
             )
-            
             model = base_model.to(self.device).eval()
 
             # Aplicar torch.compile
