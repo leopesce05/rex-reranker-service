@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 // URL del servidor
-const SERVER_URL = process.env.SERVER_URL || 'https://nh88vk2e8jxgd4-8000.proxy.runpod.net/rerank';
+const SERVER_URL = process.env.SERVER_URL || 'https://0jck8u55r8tl2e-8000.proxy.runpod.net/rerank';
 
 // Test cases para evaluar accuracy del reranker
 const TEST_CASES = [

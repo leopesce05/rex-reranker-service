@@ -5,6 +5,7 @@ torchaudio>=2.0.0
 
 # Dependencias de la aplicación
 transformers>=4.51.0
+vllm
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
