@@ -1,9 +1,12 @@
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
-// URL del servidor
 const SERVER_URL = process.env.SERVER_URL || 'https://0jck8u55r8tl2e-8000.proxy.runpod.net/rerank';
+const RESULTS_DIR = path.join(__dirname, 'results');
 
-// Lista grande de documentos de ecommerce (100+ documentos)
+// ─── DOCUMENT POOL ────────────────────────────────────────────────────────────
+
 const DOCUMENTS_POOL = [
   "Camiseta básica azul marino talla M - Algodón 100% - Precio $25",
   "Pantalón jean azul oscuro talla 32 - Corte slim - Precio $45",
@@ -54,66 +57,51 @@ const DOCUMENTS_POOL = [
   "Camiseta manga larga azul cielo talla M - Algodón 100% - Precio $28",
   "Short deportivo azul oscuro talla M - Secado rápido - Precio $20",
   "Zapatillas deportivas azules talla 40 - Running - Precio $80",
-  "Camiseta polo azul marino talla M - Manga corta - Precio $30",
   "Pantalón cargo verde oscuro talla 40 - Múltiples bolsillos - Precio $55",
   "Camiseta básica verde talla M - Algodón 100% - Precio $25",
   "Zapatillas casuales verdes talla 39 - Cuero sintético - Precio $65",
   "Camiseta manga larga verde claro talla L - Algodón orgánico - Precio $28",
   "Pantalón jean verde talla 38 - Corte recto - Precio $45",
-  "Camiseta polo verde oscuro talla S - Manga corta - Precio $30",
   "Short de baño verde talla M - Secado rápido - Precio $22",
   "Zapatillas running verdes talla 41 - Amortiguación - Precio $90",
   "Camiseta básica roja talla M - Algodón 100% - Precio $25",
   "Pantalón chino rojo talla 34 - Corte regular - Precio $50",
-  "Camiseta polo roja talla L - Manga corta - Precio $30",
   "Zapatillas deportivas rojas talla 42 - Running - Precio $80",
-  "Camiseta manga larga roja oscura talla M - Algodón 100% - Precio $28",
   "Pantalón jean rojo talla 36 - Corte slim - Precio $45",
   "Short deportivo rojo talla L - Secado rápido - Precio $20",
   "Zapatillas casuales rojas talla 40 - Cuero sintético - Precio $65",
   "Camiseta básica amarilla talla M - Algodón 100% - Precio $25",
   "Pantalón cargo amarillo talla 32 - Múltiples bolsillos - Precio $55",
-  "Camiseta polo amarilla talla S - Manga corta - Precio $30",
   "Zapatillas running amarillas talla 43 - Amortiguación - Precio $90",
-  "Camiseta manga larga amarilla talla M - Algodón orgánico - Precio $28",
   "Pantalón jean amarillo talla 30 - Corte recto - Precio $45",
   "Short de baño amarillo talla M - Secado rápido - Precio $22",
   "Zapatillas deportivas amarillas talla 41 - Running - Precio $80",
   "Camiseta básica naranja talla M - Algodón 100% - Precio $25",
   "Pantalón chino naranja talla 34 - Corte regular - Precio $50",
-  "Camiseta polo naranja talla L - Manga corta - Precio $30",
   "Zapatillas casuales naranjas talla 42 - Cuero sintético - Precio $65",
-  "Camiseta manga larga naranja talla M - Algodón 100% - Precio $28",
   "Pantalón jean naranja talla 36 - Corte slim - Precio $45",
   "Short deportivo naranja talla L - Secado rápido - Precio $20",
   "Zapatillas running naranjas talla 40 - Amortiguación - Precio $90",
   "Camiseta básica morada talla M - Algodón 100% - Precio $25",
   "Pantalón cargo morado talla 32 - Múltiples bolsillos - Precio $55",
-  "Camiseta polo morada talla S - Manga corta - Precio $30",
   "Zapatillas deportivas moradas talla 43 - Running - Precio $80",
-  "Camiseta manga larga morada talla M - Algodón orgánico - Precio $28",
   "Pantalón jean morado talla 30 - Corte recto - Precio $45",
   "Short de baño morado talla M - Secado rápido - Precio $22",
   "Zapatillas casuales moradas talla 41 - Cuero sintético - Precio $65",
   "Camiseta básica rosa talla M - Algodón 100% - Precio $25",
   "Pantalón chino rosa talla 34 - Corte regular - Precio $50",
-  "Camiseta polo rosa talla L - Manga corta - Precio $30",
   "Zapatillas running rosas talla 42 - Amortiguación - Precio $90",
-  "Camiseta manga larga rosa talla M - Algodón 100% - Precio $28",
   "Pantalón jean rosa talla 36 - Corte slim - Precio $45",
   "Short deportivo rosa talla L - Secado rápido - Precio $20",
   "Zapatillas deportivas rosas talla 40 - Running - Precio $80",
   "Camiseta básica turquesa talla M - Algodón 100% - Precio $25",
   "Pantalón cargo turquesa talla 32 - Múltiples bolsillos - Precio $55",
-  "Camiseta polo turquesa talla S - Manga corta - Precio $30",
   "Zapatillas casuales turquesas talla 43 - Cuero sintético - Precio $65",
-  "Camiseta manga larga turquesa talla M - Algodón orgánico - Precio $28",
   "Pantalón jean turquesa talla 30 - Corte recto - Precio $45",
   "Short de baño turquesa talla M - Secado rápido - Precio $22",
   "Zapatillas running turquesas talla 41 - Amortiguación - Precio $90"
 ];
 
-// Queries variados
 const QUERIES = [
   "camiseta azul talla M",
   "pantalón jean azul",
@@ -127,425 +115,287 @@ const QUERIES = [
   "zapatillas negras"
 ];
 
-// Función para obtener documentos aleatorios
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
 function getRandomDocuments(count) {
-  const selected = [];
   const pool = [...DOCUMENTS_POOL];
-  
-  for (let i = 0; i < count && pool.length > 0; i++) {
-    const randomIndex = Math.floor(Math.random() * pool.length);
-    selected.push(pool.splice(randomIndex, 1)[0]);
+  const selected = [];
+  while (selected.length < count && pool.length > 0) {
+    selected.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
   }
-  
   while (selected.length < count) {
     selected.push(DOCUMENTS_POOL[Math.floor(Math.random() * DOCUMENTS_POOL.length)]);
   }
-  
-  return selected.slice(0, count);
+  return selected;
 }
 
-// Función para hacer un request
 async function makeRequest(requestId, numDocuments = 100) {
   const query = QUERIES[Math.floor(Math.random() * QUERIES.length)];
   const documents = getRandomDocuments(numDocuments);
-  
   const startTime = Date.now();
-  
+
   try {
-    const response = await axios.post(SERVER_URL, {
-      query: query,
-      documents: documents,
-      top_k: 10
-    }, {
-      timeout: 120000
-    });
-    
+    const response = await axios.post(SERVER_URL, { query, documents, top_k: 10 }, { timeout: 120000 });
     const endTime = Date.now();
-    const totalTime = endTime - startTime;
-    const latencyMs = response.data.latency_ms || totalTime;
-    
     return {
-      requestId,
-      success: true,
-      totalTime,
-      latencyMs: latencyMs,
-      statusCode: response.status,
-      startTime,
-      endTime
+      requestId, success: true,
+      totalTime: endTime - startTime,
+      latencyMs: response.data.latency_ms || (endTime - startTime),
+      statusCode: response.status, startTime, endTime
     };
   } catch (error) {
     const endTime = Date.now();
-    const totalTime = endTime - startTime;
-    
     return {
-      requestId,
-      success: false,
-      totalTime,
+      requestId, success: false,
+      totalTime: endTime - startTime,
       latencyMs: null,
       error: error.message,
       statusCode: error.response?.status || 'N/A',
-      startTime,
-      endTime
+      startTime, endTime
     };
   }
 }
 
-// Función para calcular estadísticas
-function calculateStats(times) {
-  if (times.length === 0) return null;
-  
-  times.sort((a, b) => a - b);
-  
+function calcStats(times) {
+  if (!times.length) return null;
+  const s = [...times].sort((a, b) => a - b);
+  const sum = s.reduce((a, b) => a + b, 0);
+  const p = (pct) => s[Math.min(Math.floor(s.length * pct), s.length - 1)];
   return {
-    count: times.length,
-    min: times[0],
-    max: times[times.length - 1],
-    avg: times.reduce((a, b) => a + b, 0) / times.length,
-    p50: times[Math.floor(times.length * 0.5)],
-    p75: times[Math.floor(times.length * 0.75)],
-    p90: times[Math.floor(times.length * 0.90)],
-    p95: times[Math.floor(times.length * 0.95)],
-    p99: times[Math.floor(times.length * 0.99)]
+    count: s.length, min: s[0], max: s[s.length - 1],
+    avg: sum / s.length, p50: p(0.5), p75: p(0.75),
+    p90: p(0.9), p95: p(0.95), p99: p(0.99)
   };
 }
 
-// Función para mostrar gráfico ASCII simple
-function showDistribution(times, title, maxBars = 50) {
-  if (times.length === 0) return;
-  
-  times.sort((a, b) => a - b);
-  const min = times[0];
-  const max = times[times.length - 1];
+function asciiHistogram(times, title, width = 40) {
+  if (!times.length) return;
+  const s = [...times].sort((a, b) => a - b);
+  const min = s[0], max = s[s.length - 1];
   const range = max - min || 1;
-  const buckets = 20;
-  const bucketSize = range / buckets;
-  
-  const histogram = new Array(buckets).fill(0);
-  times.forEach(time => {
-    const bucket = Math.min(Math.floor((time - min) / bucketSize), buckets - 1);
-    histogram[bucket]++;
+  const BUCKETS = 15;
+  const bucketSize = range / BUCKETS;
+  const hist = new Array(BUCKETS).fill(0);
+  s.forEach(t => hist[Math.min(Math.floor((t - min) / bucketSize), BUCKETS - 1)]++);
+  const peak = Math.max(...hist);
+
+  console.log(`\n  ${title}`);
+  console.log('  ' + '─'.repeat(60));
+  hist.forEach((count, i) => {
+    const lo = (min + i * bucketSize).toFixed(0).padStart(6);
+    const hi = (min + (i + 1) * bucketSize).toFixed(0).padStart(6);
+    const bar = '█'.repeat(Math.round((count / peak) * width));
+    const pct = ((count / s.length) * 100).toFixed(1).padStart(5);
+    console.log(`  ${lo}-${hi}ms │${bar.padEnd(width)} ${count} (${pct}%)`);
   });
-  
-  const maxCount = Math.max(...histogram);
-  
-  console.log(`\n${title}:`);
-  console.log('─'.repeat(60));
-  for (let i = 0; i < buckets; i++) {
-    const bucketMin = (min + i * bucketSize).toFixed(0);
-    const bucketMax = (min + (i + 1) * bucketSize).toFixed(0);
-    const count = histogram[i];
-    const barLength = Math.floor((count / maxCount) * maxBars);
-    const bar = '█'.repeat(barLength);
-    const percentage = ((count / times.length) * 100).toFixed(1);
-    console.log(`${bucketMin.padStart(6)}-${bucketMax.padEnd(6)}ms: ${bar} ${count} (${percentage}%)`);
-  }
 }
 
-// Función para mostrar resultados de una prueba
-function displayResults(testName, results, totalTestTime) {
-  const successful = results.filter(r => r.success);
-  const failed = results.filter(r => !r.success);
-  const totalTimes = successful.map(r => r.totalTime).filter(t => t !== null);
-  const latencies = successful.map(r => r.latencyMs).filter(l => l !== null);
-  
-  console.log('\n' + '='.repeat(70));
-  console.log(`PRUEBA: ${testName}`);
-  console.log('='.repeat(70));
-  console.log(`Tiempo total del test: ${totalTestTime}ms (${(totalTestTime / 1000).toFixed(2)}s)`);
-  console.log(`Throughput: ${(results.length / (totalTestTime / 1000)).toFixed(2)} req/s`);
-  console.log(`\nExitosos: ${successful.length}/${results.length} (${((successful.length / results.length) * 100).toFixed(1)}%)`);
-  console.log(`Fallidos: ${failed.length}/${results.length} (${((failed.length / results.length) * 100).toFixed(1)}%)`);
-  
-  const totalStats = calculateStats(totalTimes);
-  if (totalStats) {
-    console.log('\n--- Tiempo Total (incluye red) (ms) ---');
-    console.log(`Promedio: ${totalStats.avg.toFixed(2)}ms`);
-    console.log(`Mínimo: ${totalStats.min.toFixed(2)}ms`);
-    console.log(`Máximo: ${totalStats.max.toFixed(2)}ms`);
-    console.log(`P50: ${totalStats.p50.toFixed(2)}ms`);
-    console.log(`P75: ${totalStats.p75.toFixed(2)}ms`);
-    console.log(`P90: ${totalStats.p90.toFixed(2)}ms`);
-    console.log(`P95: ${totalStats.p95.toFixed(2)}ms`);
-    console.log(`P99: ${totalStats.p99.toFixed(2)}ms`);
-    
-    showDistribution(totalTimes, 'Distribución de Tiempos Totales');
-  }
-  
-  const latencyStats = calculateStats(latencies);
-  if (latencyStats) {
-    console.log('\n--- Latencia del Modelo (solo procesamiento) (ms) ---');
-    console.log(`Promedio: ${latencyStats.avg.toFixed(2)}ms`);
-    console.log(`Mínimo: ${latencyStats.min.toFixed(2)}ms`);
-    console.log(`Máximo: ${latencyStats.max.toFixed(2)}ms`);
-    console.log(`P95: ${latencyStats.p95.toFixed(2)}ms`);
-  }
-  
-  if (failed.length > 0) {
-    console.log('\n--- Errores ---');
-    const errorCounts = {};
-    failed.forEach(f => {
-      const key = f.error || `Status ${f.statusCode}`;
-      errorCounts[key] = (errorCounts[key] || 0) + 1;
-    });
-    Object.entries(errorCounts).forEach(([error, count]) => {
-      console.log(`  ${error}: ${count}`);
-    });
-  }
-  
-  console.log('='.repeat(70));
+function asciiTimeline(results, title) {
+  // Show throughput over time in 1s buckets
+  if (!results.length) return;
+  const start = Math.min(...results.map(r => r.startTime));
+  const end = Math.max(...results.map(r => r.endTime));
+  const durationS = Math.ceil((end - start) / 1000);
+  if (durationS <= 0) return;
+
+  const buckets = new Array(durationS).fill(0);
+  results.filter(r => r.success).forEach(r => {
+    const bucket = Math.min(Math.floor((r.endTime - start) / 1000), durationS - 1);
+    buckets[bucket]++;
+  });
+  const peak = Math.max(...buckets, 1);
+  const W = 36;
+
+  console.log(`\n  ${title} (requests completed per second)`);
+  console.log('  ' + '─'.repeat(55));
+  buckets.forEach((count, i) => {
+    const bar = '█'.repeat(Math.round((count / peak) * W));
+    console.log(`  ${String(i + 1).padStart(3)}s │${bar.padEnd(W)} ${count}`);
+  });
 }
 
-// Escenarios de prueba
-const TEST_SCENARIOS = {
-  // Prueba 1: Carga baja - 10 requests en paralelo
-  lowLoad: async () => {
-    console.log('\n🔵 PRUEBA 1: CARGA BAJA - 10 requests en paralelo');
-    const NUM_REQUESTS = 10;
-    const startTime = Date.now();
-    const requests = Array.from({ length: NUM_REQUESTS }, (_, i) => makeRequest(i + 1));
-    const results = await Promise.all(requests);
-    const totalTime = Date.now() - startTime;
-    displayResults('Carga Baja (10 req paralelo)', results, totalTime);
-    return results;
-  },
-  
-  // Prueba 2: Carga media - 50 requests en paralelo
-  mediumLoad: async () => {
-    console.log('\n🟡 PRUEBA 2: CARGA MEDIA - 50 requests en paralelo');
-    const NUM_REQUESTS = 50;
-    const startTime = Date.now();
-    const requests = Array.from({ length: NUM_REQUESTS }, (_, i) => makeRequest(i + 1));
-    const results = await Promise.all(requests);
-    const totalTime = Date.now() - startTime;
-    displayResults('Carga Media (50 req paralelo)', results, totalTime);
-    return results;
-  },
-  
-  // Prueba 3: Carga alta - 100 requests en paralelo
-  highLoad: async () => {
-    console.log('\n🔴 PRUEBA 3: CARGA ALTA - 100 requests en paralelo');
-    const NUM_REQUESTS = 100;
-    const startTime = Date.now();
-    const requests = Array.from({ length: NUM_REQUESTS }, (_, i) => makeRequest(i + 1));
-    const results = await Promise.all(requests);
-    const totalTime = Date.now() - startTime;
-    displayResults('Carga Alta (100 req paralelo)', results, totalTime);
-    return results;
-  },
-  
-  // Prueba 4: Carga extrema - 200 requests en paralelo
-  extremeLoad: async () => {
-    console.log('\n⚫ PRUEBA 4: CARGA EXTREMA - 200 requests en paralelo');
-    const NUM_REQUESTS = 200;
-    const startTime = Date.now();
-    const requests = Array.from({ length: NUM_REQUESTS }, (_, i) => makeRequest(i + 1));
-    const results = await Promise.all(requests);
-    const totalTime = Date.now() - startTime;
-    displayResults('Carga Extrema (200 req paralelo)', results, totalTime);
-    return results;
-  },
-  
-  // Prueba 5: Carga sostenida - 100 requests distribuidos en 30 segundos
-  sustainedLoad: async () => {
-    console.log('\n🟢 PRUEBA 5: CARGA SOSTENIDA - 100 requests en 30 segundos');
-    const NUM_REQUESTS = 100;
-    const DURATION_MS = 30000;
-    const INTERVAL_MS = DURATION_MS / NUM_REQUESTS;
-    
-    const startTime = Date.now();
-    const requests = [];
-    
-    for (let i = 0; i < NUM_REQUESTS; i++) {
-      const delay = i * INTERVAL_MS;
-      const requestPromise = new Promise(resolve => {
-        setTimeout(() => {
-          resolve(makeRequest(i + 1));
-        }, delay);
-      });
-      requests.push(requestPromise);
-    }
-    
-    const results = await Promise.all(requests);
-    const totalTime = Date.now() - startTime;
-    displayResults('Carga Sostenida (100 req en 30s)', results, totalTime);
-    return results;
-  },
-  
-  // Prueba 6: Carga en ráfagas - 5 ráfagas de 20 requests cada 5 segundos
-  burstLoad: async () => {
-    console.log('\n⚡ PRUEBA 6: CARGA EN RÁFAGAS - 5 ráfagas de 20 requests');
-    const BURST_SIZE = 20;
-    const NUM_BURSTS = 5;
-    const BURST_INTERVAL_MS = 5000;
-    
-    const allResults = [];
-    const startTime = Date.now();
-    
-    for (let burst = 0; burst < NUM_BURSTS; burst++) {
-      console.log(`\n  Ráfaga ${burst + 1}/${NUM_BURSTS}...`);
-      const burstStart = Date.now();
-      const requests = Array.from({ length: BURST_SIZE }, (_, i) => 
-        makeRequest(burst * BURST_SIZE + i + 1)
-      );
-      const results = await Promise.all(requests);
-      const burstTime = Date.now() - burstStart;
-      allResults.push(...results);
-      
-      console.log(`  Ráfaga ${burst + 1} completada en ${burstTime}ms`);
-      
-      if (burst < NUM_BURSTS - 1) {
-        await new Promise(resolve => setTimeout(resolve, BURST_INTERVAL_MS));
-      }
-    }
-    
-    const totalTime = Date.now() - startTime;
-    displayResults('Carga en Ráfagas (5x20 req)', allResults, totalTime);
-    return allResults;
-  },
-  
-  // Prueba 7: Carga incremental - Aumenta gradualmente
-  incrementalLoad: async () => {
-    console.log('\n📈 PRUEBA 7: CARGA INCREMENTAL - Aumento gradual');
-    const STAGES = [10, 25, 50, 75, 100];
-    const STAGE_INTERVAL_MS = 10000;
-    
-    const allResults = [];
-    const startTime = Date.now();
-    
-    for (let stage = 0; stage < STAGES.length; stage++) {
-      const numRequests = STAGES[stage];
-      console.log(`\n  Etapa ${stage + 1}/${STAGES.length}: ${numRequests} requests...`);
-      
-      const stageStart = Date.now();
-      const requests = Array.from({ length: numRequests }, (_, i) => 
-        makeRequest(allResults.length + i + 1)
-      );
-      const results = await Promise.all(requests);
-      const stageTime = Date.now() - stageStart;
-      allResults.push(...results);
-      
-      const successRate = (results.filter(r => r.success).length / results.length * 100).toFixed(1);
-      const avgTime = results.filter(r => r.success)
-        .reduce((sum, r) => sum + r.totalTime, 0) / results.filter(r => r.success).length || 0;
-      
-      console.log(`  Etapa ${stage + 1} completada: ${stageTime}ms, ${successRate}% éxito, avg ${avgTime.toFixed(0)}ms`);
-      
-      if (stage < STAGES.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, STAGE_INTERVAL_MS));
-      }
-    }
-    
-    const totalTime = Date.now() - startTime;
-    displayResults('Carga Incremental (10→25→50→75→100)', allResults, totalTime);
-    return allResults;
-  },
-  
-  // Prueba 8: Diferentes tamaños de documentos
-  differentDocSizes: async () => {
-    console.log('\n📊 PRUEBA 8: DIFERENTES TAMAÑOS DE DOCUMENTOS');
-    const DOC_SIZES = [10, 50, 100, 200];
-    const REQUESTS_PER_SIZE = 10;
-    
-    const allResults = [];
-    const startTime = Date.now();
-    
-    for (const docSize of DOC_SIZES) {
-      console.log(`\n  Probando con ${docSize} documentos por request...`);
-      const sizeStart = Date.now();
-      
-      const requests = Array.from({ length: REQUESTS_PER_SIZE }, (_, i) => {
-        const requestId = allResults.length + i + 1;
-        return makeRequest(requestId, docSize);
-      });
-      
-      const results = await Promise.all(requests);
-      const sizeTime = Date.now() - sizeStart;
-      allResults.push(...results);
-      
-      const avgTime = results.filter(r => r.success)
-        .reduce((sum, r) => sum + r.totalTime, 0) / results.filter(r => r.success).length || 0;
-      
-      console.log(`  ${docSize} docs: ${sizeTime}ms total, ${avgTime.toFixed(0)}ms promedio`);
-    }
-    
-    const totalTime = Date.now() - startTime;
-    displayResults('Diferentes Tamaños de Documentos', allResults, totalTime);
-    return allResults;
-  }
-};
+function displayResults(label, results, totalMs) {
+  const ok = results.filter(r => r.success);
+  const fail = results.filter(r => !r.success);
+  const times = ok.map(r => r.totalTime);
+  const lats = ok.map(r => r.latencyMs).filter(Boolean);
 
-// Función principal
+  console.log('\n' + '═'.repeat(72));
+  console.log(`  ${label}`);
+  console.log('─'.repeat(72));
+  console.log(`  Duration  : ${(totalMs / 1000).toFixed(2)}s`);
+  console.log(`  Throughput: ${(results.length / (totalMs / 1000)).toFixed(2)} req/s`);
+  console.log(`  Success   : ${ok.length}/${results.length} (${(ok.length / results.length * 100).toFixed(1)}%)`);
+  console.log(`  Failures  : ${fail.length}`);
+
+  const ts = calcStats(times);
+  if (ts) {
+    console.log(`\n  Round-trip latency (ms)`);
+    console.log(`    avg ${ts.avg.toFixed(0).padStart(6)}  min ${ts.min.toFixed(0).padStart(6)}  max ${ts.max.toFixed(0).padStart(6)}`);
+    console.log(`    p50 ${ts.p50.toFixed(0).padStart(6)}  p75 ${ts.p75.toFixed(0).padStart(6)}  p90 ${ts.p90.toFixed(0).padStart(6)}  p95 ${ts.p95.toFixed(0).padStart(6)}  p99 ${ts.p99.toFixed(0).padStart(6)}`);
+    asciiHistogram(times, 'Latency distribution (round-trip)');
+  }
+
+  const ls = calcStats(lats);
+  if (ls) {
+    console.log(`\n  Server-side processing latency (ms)`);
+    console.log(`    avg ${ls.avg.toFixed(0).padStart(6)}  p50 ${ls.p50.toFixed(0).padStart(6)}  p95 ${ls.p95.toFixed(0).padStart(6)}  p99 ${ls.p99.toFixed(0).padStart(6)}`);
+  }
+
+  if (fail.length) {
+    const errs = {};
+    fail.forEach(f => { const k = f.error || `HTTP ${f.statusCode}`; errs[k] = (errs[k] || 0) + 1; });
+    console.log(`\n  Errors:`);
+    Object.entries(errs).forEach(([e, c]) => console.log(`    ${e}: ${c}`));
+  }
+
+  asciiTimeline(results, 'Completions over time');
+
+  return { label, totalMs, stats: ts, serverStats: ls, ok: ok.length, fail: fail.length, total: results.length };
+}
+
+// ─── TEST SCENARIOS ───────────────────────────────────────────────────────────
+
+async function runScenario(label, fn) {
+  console.log(`\n  ▶ ${label}`);
+  const start = Date.now();
+  const results = await fn();
+  const elapsed = Date.now() - start;
+  return displayResults(label, results, elapsed);
+}
+
+async function parallel(n, docs = 100) {
+  return Promise.all(Array.from({ length: n }, (_, i) => makeRequest(i + 1, docs)));
+}
+
+async function sustained(n, durationMs) {
+  const interval = durationMs / n;
+  return Promise.all(
+    Array.from({ length: n }, (_, i) =>
+      new Promise(res => setTimeout(() => res(makeRequest(i + 1)), i * interval))
+    )
+  );
+}
+
+async function bursts(burstSize, numBursts, intervalMs) {
+  const all = [];
+  for (let b = 0; b < numBursts; b++) {
+    console.log(`    Burst ${b + 1}/${numBursts}…`);
+    all.push(...await parallel(burstSize));
+    if (b < numBursts - 1) await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return all;
+}
+
+async function incremental(stages, pauseMs) {
+  const all = [];
+  for (const n of stages) {
+    console.log(`    Stage ${n} requests…`);
+    all.push(...await parallel(n));
+    if (stages.indexOf(n) < stages.length - 1) await new Promise(r => setTimeout(r, pauseMs));
+  }
+  return all;
+}
+
+async function docSizes(sizes, reqPerSize) {
+  const all = [];
+  for (const size of sizes) {
+    console.log(`    ${size} docs/request…`);
+    all.push(...await parallel(reqPerSize, size));
+  }
+  return all;
+}
+
+// ─── MAIN ────────────────────────────────────────────────────────────────────
+
 async function runAllTests() {
-  console.log('='.repeat(70));
-  console.log('SUITE DE PRUEBAS DE CARGA - Reranking Server');
-  console.log('='.repeat(70));
-  console.log(`Servidor: ${SERVER_URL}`);
-  console.log(`Inicio: ${new Date().toISOString()}`);
-  console.log('='.repeat(70));
-  
-  const allTestResults = {};
-  const overallStart = Date.now();
-  
+  console.log('═'.repeat(72));
+  console.log('  LOAD TEST SUITE — RexReranker');
+  console.log('═'.repeat(72));
+  console.log(`  Server : ${SERVER_URL}`);
+  console.log(`  Start  : ${new Date().toISOString()}`);
+  console.log('═'.repeat(72));
+
+  const pause = (ms) => new Promise(r => setTimeout(r, ms));
+  const scenarioResults = [];
+
   try {
-    // Ejecutar todas las pruebas
-    allTestResults.lowLoad = await TEST_SCENARIOS.lowLoad();
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Pausa entre pruebas
-    
-    allTestResults.mediumLoad = await TEST_SCENARIOS.mediumLoad();
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    allTestResults.highLoad = await TEST_SCENARIOS.highLoad();
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    allTestResults.extremeLoad = await TEST_SCENARIOS.extremeLoad();
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    allTestResults.sustainedLoad = await TEST_SCENARIOS.sustainedLoad();
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    allTestResults.burstLoad = await TEST_SCENARIOS.burstLoad();
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    allTestResults.incrementalLoad = await TEST_SCENARIOS.incrementalLoad();
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    allTestResults.differentDocSizes = await TEST_SCENARIOS.differentDocSizes();
-    
-  } catch (error) {
-    console.error('\n❌ Error ejecutando pruebas:', error);
+    scenarioResults.push(await runScenario('Low load — 10 parallel requests',       () => parallel(10)));
+    await pause(5000);
+    scenarioResults.push(await runScenario('Medium load — 50 parallel requests',    () => parallel(50)));
+    await pause(5000);
+    scenarioResults.push(await runScenario('High load — 100 parallel requests',     () => parallel(100)));
+    await pause(5000);
+    scenarioResults.push(await runScenario('Extreme load — 200 parallel requests',  () => parallel(200)));
+    await pause(5000);
+    scenarioResults.push(await runScenario('Sustained — 100 req over 30s',          () => sustained(100, 30000)));
+    await pause(5000);
+    scenarioResults.push(await runScenario('Burst — 5 × 20 req every 5s',           () => bursts(20, 5, 5000)));
+    await pause(5000);
+    scenarioResults.push(await runScenario('Incremental — 10→25→50→75→100',         () => incremental([10, 25, 50, 75, 100], 10000)));
+    await pause(5000);
+    scenarioResults.push(await runScenario('Doc sizes — 10/50/100/200 docs × 10',   () => docSizes([10, 50, 100, 200], 10)));
+  } catch (err) {
+    console.error('\nError during tests:', err.message);
   }
-  
-  const overallTime = Date.now() - overallStart;
-  
-  // Resumen final
-  console.log('\n\n' + '='.repeat(70));
-  console.log('RESUMEN FINAL DE TODAS LAS PRUEBAS');
-  console.log('='.repeat(70));
-  console.log(`Tiempo total de todas las pruebas: ${(overallTime / 1000).toFixed(2)}s`);
-  console.log(`Fin: ${new Date().toISOString()}`);
-  console.log('='.repeat(70));
-  
-  // Comparación de rendimiento
-  console.log('\n📊 COMPARACIÓN DE RENDIMIENTO:');
-  console.log('─'.repeat(70));
-  Object.entries(allTestResults).forEach(([testName, results]) => {
-    const successful = results.filter(r => r.success);
-    const totalTimes = successful.map(r => r.totalTime);
-    if (totalTimes.length > 0) {
-      const avg = totalTimes.reduce((a, b) => a + b, 0) / totalTimes.length;
-      const p95 = totalTimes.sort((a, b) => a - b)[Math.floor(totalTimes.length * 0.95)];
-      console.log(`${testName.padEnd(25)}: Avg ${avg.toFixed(0)}ms | P95 ${p95.toFixed(0)}ms | ${successful.length}/${results.length} éxito`);
-    }
+
+  // ── Comparison table ──
+  console.log('\n\n' + '═'.repeat(72));
+  console.log('  SCENARIO COMPARISON');
+  console.log('─'.repeat(72));
+  console.log('  Scenario                          Avg(ms)  P95(ms)  Succ%  RPS');
+  console.log('  ' + '─'.repeat(68));
+  scenarioResults.forEach(s => {
+    if (!s.stats) return;
+    const label = s.label.slice(0, 33).padEnd(33);
+    const avg = s.stats.avg.toFixed(0).padStart(7);
+    const p95 = s.stats.p95.toFixed(0).padStart(7);
+    const succ = (s.ok / s.total * 100).toFixed(1).padStart(5);
+    const rps = (s.total / (s.totalMs / 1000)).toFixed(2).padStart(5);
+    console.log(`  ${label}  ${avg}  ${p95}  ${succ}%  ${rps}`);
   });
-  console.log('='.repeat(70));
+
+  // ── Save results ──
+  if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR, { recursive: true });
+
+  const output = {
+    timestamp: new Date().toISOString(),
+    server: SERVER_URL,
+    scenarios: scenarioResults.map(s => ({
+      label: s.label,
+      totalMs: s.totalMs,
+      total: s.total,
+      ok: s.ok,
+      fail: s.fail,
+      successRate: parseFloat((s.ok / s.total * 100).toFixed(2)),
+      rps: parseFloat((s.total / (s.totalMs / 1000)).toFixed(2)),
+      stats: s.stats ? {
+        avg: parseFloat(s.stats.avg.toFixed(2)),
+        min: s.stats.min, max: s.stats.max,
+        p50: s.stats.p50, p75: s.stats.p75,
+        p90: s.stats.p90, p95: s.stats.p95, p99: s.stats.p99
+      } : null,
+      serverStats: s.serverStats ? {
+        avg: parseFloat(s.serverStats.avg.toFixed(2)),
+        p50: s.serverStats.p50, p95: s.serverStats.p95, p99: s.serverStats.p99
+      } : null
+    }))
+  };
+
+  const outPath = path.join(RESULTS_DIR, 'load_results.json');
+  fs.writeFileSync(outPath, JSON.stringify(output, null, 2));
+  console.log(`\n  Results saved → ${outPath}`);
+  console.log('\n  End: ' + new Date().toISOString());
+  console.log('═'.repeat(72));
+
+  return output;
 }
 
-// Ejecutar todas las pruebas
 if (require.main === module) {
-  runAllTests().catch(error => {
-    console.error('Error fatal:', error);
+  runAllTests().catch(err => {
+    console.error('Fatal error:', err);
     process.exit(1);
   });
 }
 
-module.exports = { runAllTests, TEST_SCENARIOS };
+module.exports = { runAllTests };

@@ -1,11 +1,14 @@
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
-// URL del servidor
 const SERVER_URL = process.env.SERVER_URL || 'https://0jck8u55r8tl2e-8000.proxy.runpod.net/rerank';
+const RESULTS_DIR = path.join(__dirname, 'results');
 
-// Test cases para evaluar accuracy del reranker
+// ─── TEST CASES ───────────────────────────────────────────────────────────────
+
 const TEST_CASES = [
-  // ========== PRENDAS DE ROPA ==========
+  // ========== ROPA ==========
   {
     name: "Camiseta azul talla M - Hombre",
     category: "ropa",
@@ -180,6 +183,25 @@ const TEST_CASES = [
       "Sennheiser Momentum 4 - Inalámbricos - Cancelación de ruido - $379"
     ]
   },
+  {
+    name: "Tablet for kids",
+    category: "electronica",
+    query: "tablet for kids educational apps",
+    documents: [
+      "Amazon Fire HD 8 Kids Edition - 8-inch - 32GB - Parental controls - $139",
+      "iPad 10th Gen - 10.9-inch - 64GB - Wi-Fi - $449",
+      "Samsung Galaxy Tab A8 - 10.5-inch - 64GB - Android - $229",
+      "LeapFrog Epic Academy Edition - 7-inch - 16GB - Kids learning tablet - $89",
+      "Amazon Fire 7 Kids - 7-inch - 16GB - Educational content - $99",
+      "Lenovo Tab M10 FHD Plus - 10.3-inch - 64GB - Android - $199",
+      "Microsoft Surface Go 3 - 10.5-inch - 64GB - Windows 11 - $399"
+    ],
+    expectedTop3: [
+      "Amazon Fire HD 8 Kids Edition - 8-inch - 32GB - Parental controls - $139",
+      "LeapFrog Epic Academy Edition - 7-inch - 16GB - Kids learning tablet - $89",
+      "Amazon Fire 7 Kids - 7-inch - 16GB - Educational content - $99"
+    ]
+  },
 
   // ========== HOGAR ==========
   {
@@ -218,6 +240,25 @@ const TEST_CASES = [
       "De'Longhi Magnifica S - Cafetera espresso automática - $599",
       "Philips 3200 - Cafetera espresso superautomática - $899",
       "Breville Barista Express - Cafetera espresso semiautomática - $699"
+    ]
+  },
+  {
+    name: "Air purifier for allergies",
+    category: "hogar",
+    query: "air purifier HEPA filter for allergies",
+    documents: [
+      "Dyson Pure Cool TP07 - HEPA + Carbon filter - 800 sq ft - $649",
+      "Levoit Core 400S - HEPA filter - 403 sq ft - Smart - $229",
+      "Winix 5500-2 - HEPA + Carbon - 360 sq ft - PlasmaWave - $199",
+      "Coway AP-1512HH Mighty - HEPA - 360 sq ft - $149",
+      "Blueair Blue Pure 211+ - HEPA - 540 sq ft - $299",
+      "Honeywell HPA300 - HEPA - 465 sq ft - $249",
+      "Humidifier Levoit 6L - Ultrasonic - Essential oil diffuser - $79"
+    ],
+    expectedTop3: [
+      "Coway AP-1512HH Mighty - HEPA - 360 sq ft - $149",
+      "Winix 5500-2 - HEPA + Carbon - 360 sq ft - PlasmaWave - $199",
+      "Levoit Core 400S - HEPA filter - 403 sq ft - Smart - $229"
     ]
   },
 
@@ -260,6 +301,25 @@ const TEST_CASES = [
       "Yes4All Adjustable Dumbbells - Pesas ajustables - 5-50 lbs - $179"
     ]
   },
+  {
+    name: "Yoga mat thick",
+    category: "deportes",
+    query: "thick non-slip yoga mat for home workouts",
+    documents: [
+      "Liforme Yoga Mat - 4.2mm - Non-slip - Alignment markers - $150",
+      "Manduka PRO Yoga Mat - 6mm - High density - Non-slip - $120",
+      "Gaiam Premium Printed Yoga Mat - 6mm - Non-slip - $39",
+      "Lululemon The Reversible Mat 5mm - Non-slip - $88",
+      "Cork Yoga Block Set - Eco-friendly - 2 blocks + strap - $29",
+      "Nike Training Floor Mat - 6mm - $35",
+      "Treadmill NordicTrack T 6.5 Si - Foldable - $699"
+    ],
+    expectedTop3: [
+      "Manduka PRO Yoga Mat - 6mm - High density - Non-slip - $120",
+      "Gaiam Premium Printed Yoga Mat - 6mm - Non-slip - $39",
+      "Lululemon The Reversible Mat 5mm - Non-slip - $88"
+    ]
+  },
 
   // ========== LIBROS ==========
   {
@@ -280,190 +340,354 @@ const TEST_CASES = [
       "Learn Python the Hard Way - Zed Shaw - Programación Python - $35",
       "Head First Python - Paul Barry - Programación Python visual - $42"
     ]
+  },
+  {
+    name: "Machine learning book",
+    category: "libros",
+    query: "machine learning textbook for beginners",
+    documents: [
+      "Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow - Aurélien Géron - $65",
+      "Pattern Recognition and Machine Learning - Bishop - Advanced - $89",
+      "Introduction to Machine Learning with Python - Müller & Guido - $49",
+      "Deep Learning - Goodfellow, Bengio, Courville - $79",
+      "The Hundred-Page Machine Learning Book - Burkov - $30",
+      "Data Science for Beginners - 4 weeks guide - $19",
+      "Machine Learning Engineering - Andriy Burkov - $35"
+    ],
+    expectedTop3: [
+      "Introduction to Machine Learning with Python - Müller & Guido - $49",
+      "The Hundred-Page Machine Learning Book - Burkov - $30",
+      "Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow - Aurélien Géron - $65"
+    ]
+  },
+
+  // ========== ALIMENTACIÓN ==========
+  {
+    name: "Protein powder whey",
+    category: "alimentacion",
+    query: "whey protein powder chocolate flavor muscle building",
+    documents: [
+      "Optimum Nutrition Gold Standard 100% Whey - Chocolate - 5lb - $59",
+      "Dymatize ISO100 Hydrolyzed Whey - Chocolate Fudge - 5lb - $69",
+      "BSN SYNTHA-6 Whey Protein - Chocolate Milkshake - 5lb - $55",
+      "Garden of Life Organic Plant Protein - Chocolate - 2.4lb - $49",
+      "Casein Protein MuscleTech - Vanilla - 4lb - $39",
+      "Creatine Monohydrate Bulk Supplements - Unflavored - 1kg - $29",
+      "MyProtein Impact Whey - Chocolate Smooth - 5.5lb - $44"
+    ],
+    expectedTop3: [
+      "Optimum Nutrition Gold Standard 100% Whey - Chocolate - 5lb - $59",
+      "Dymatize ISO100 Hydrolyzed Whey - Chocolate Fudge - 5lb - $69",
+      "BSN SYNTHA-6 Whey Protein - Chocolate Milkshake - 5lb - $55"
+    ]
+  },
+  {
+    name: "Vegan snacks healthy",
+    category: "alimentacion",
+    query: "healthy vegan snacks high protein",
+    documents: [
+      "RXBar Chocolate Sea Salt - Plant-based protein bar - 12 pack - $27",
+      "Kind Protein Bar - Dark Chocolate Nut - 12 pack - $24",
+      "Lärabar Peanut Butter Chocolate Chip - Vegan - 16 pack - $22",
+      "Oreo Cookies Original - 14.3oz - $4",
+      "CLIF Bar Energy Bar - Oatmeal Raisin Walnut - Vegan - 12 pack - $20",
+      "Pringles Original - 5.2oz - $3",
+      "Enjoy Life Dark Chocolate Morsels - Vegan - 9oz - $8"
+    ],
+    expectedTop3: [
+      "RXBar Chocolate Sea Salt - Plant-based protein bar - 12 pack - $27",
+      "Kind Protein Bar - Dark Chocolate Nut - 12 pack - $24",
+      "CLIF Bar Energy Bar - Oatmeal Raisin Walnut - Vegan - 12 pack - $20"
+    ]
+  },
+
+  // ========== SALUD ==========
+  {
+    name: "Blood pressure monitor",
+    category: "salud",
+    query: "blood pressure monitor home use accurate",
+    documents: [
+      "Omron Platinum Blood Pressure Monitor - Upper arm - Bluetooth - $79",
+      "Withings BPM Connect - Wi-Fi & Bluetooth - Upper arm - $99",
+      "Omron Silver Blood Pressure Monitor - Upper arm - $49",
+      "Greater Goods Blood Pressure Cuff - Upper arm - $39",
+      "iHealth Track Wrist Blood Pressure Monitor - Bluetooth - $59",
+      "Pulse Oximeter Zacurate Pro Series - Fingertip - $29",
+      "Digital Thermometer Braun ThermoScan 7 - Ear - $49"
+    ],
+    expectedTop3: [
+      "Omron Platinum Blood Pressure Monitor - Upper arm - Bluetooth - $79",
+      "Withings BPM Connect - Wi-Fi & Bluetooth - Upper arm - $99",
+      "Omron Silver Blood Pressure Monitor - Upper arm - $49"
+    ]
+  },
+  {
+    name: "Vitamin D supplement",
+    category: "salud",
+    query: "vitamin D3 supplement 2000 IU",
+    documents: [
+      "Nature Made Vitamin D3 2000 IU - 260 softgels - $12",
+      "NOW Foods Vitamin D3 2000 IU - 240 softgels - $11",
+      "Sports Research Vitamin D3 5000 IU with Coconut Oil - 360 softgels - $19",
+      "Garden of Life Vitamin Code Raw D3 2000 IU - 60 capsules - $18",
+      "Thorne Vitamin D/K2 Liquid - 1oz - $24",
+      "Multivitamin Centrum Adults - 200 tablets - $16",
+      "Omega-3 Fish Oil Nordic Naturals - 120 softgels - $25"
+    ],
+    expectedTop3: [
+      "Nature Made Vitamin D3 2000 IU - 260 softgels - $12",
+      "NOW Foods Vitamin D3 2000 IU - 240 softgels - $11",
+      "Garden of Life Vitamin Code Raw D3 2000 IU - 60 capsules - $18"
+    ]
   }
 ];
 
-// Función para hacer request de reranking
+// ─── HTTP REQUEST ─────────────────────────────────────────────────────────────
+
 async function rerankRequest(query, documents) {
   try {
     const response = await axios.post(SERVER_URL, {
-      query: query,
-      documents: documents,
-      top_k: documents.length  // Retornar todos para evaluar orden completo
-    }, {
-      timeout: 120000
-    });
+      query,
+      documents,
+      top_k: documents.length
+    }, { timeout: 120000 });
     return response.data.results;
   } catch (error) {
-    console.error(`Error en rerank: ${error.message}`);
+    console.error(`  Error: ${error.message}`);
     return null;
   }
 }
 
-// Función para calcular métricas de accuracy
-function calculateAccuracy(testCase, results) {
+// ─── METRICS ─────────────────────────────────────────────────────────────────
+
+function calculateMetrics(testCase, results) {
   if (!results || results.length === 0) {
-    return {
-      top1: 0,
-      top3: 0,
-      top5: 0,
-      mrr: 0,  // Mean Reciprocal Rank
-      ndcg: 0  // Normalized Discounted Cumulative Gain (simplificado)
-    };
+    return { top1: 0, top3: 0, top5: 0, mrr: 0, ndcg5: 0, precisionAt1: 0, precisionAt3: 0, precisionAt5: 0, ap: 0 };
   }
 
-  const expectedDocs = testCase.expectedTop3;
-  const resultDocs = results.map(r => r.document);
-  
-  // Top-1 Accuracy
-  const top1 = resultDocs[0] === expectedDocs[0] ? 1 : 0;
-  
-  // Top-3 Accuracy
-  const top3 = expectedDocs.some(doc => resultDocs.slice(0, 3).includes(doc)) ? 1 : 0;
-  
-  // Top-5 Accuracy
-  const top5 = expectedDocs.some(doc => resultDocs.slice(0, 5).includes(doc)) ? 1 : 0;
-  
-  // Mean Reciprocal Rank (MRR)
+  const expected = testCase.expectedTop3;
+  const ranked = results.map(r => r.document);
+  const numRelevant = expected.length;
+
+  // Top-K Hit (at least one expected doc in top K)
+  const top1 = expected.includes(ranked[0]) ? 1 : 0;
+  const top3 = expected.some(d => ranked.slice(0, 3).includes(d)) ? 1 : 0;
+  const top5 = expected.some(d => ranked.slice(0, 5).includes(d)) ? 1 : 0;
+
+  // Precision@K = |relevant ∩ retrieved@K| / K
+  const precisionAt1 = expected.includes(ranked[0]) ? 1 : 0;
+  const precisionAt3 = ranked.slice(0, 3).filter(d => expected.includes(d)).length / 3;
+  const precisionAt5 = ranked.slice(0, 5).filter(d => expected.includes(d)).length / 5;
+
+  // MRR — rank of first relevant doc
   let mrr = 0;
-  for (const expectedDoc of expectedDocs) {
-    const rank = resultDocs.indexOf(expectedDoc) + 1;
-    if (rank > 0) {
-      mrr += 1 / rank;
-      break;  // Solo el primer match cuenta para MRR
+  for (let i = 0; i < ranked.length; i++) {
+    if (expected.includes(ranked[i])) {
+      mrr = 1 / (i + 1);
+      break;
     }
   }
-  
-  // NDCG simplificado (asumiendo relevancia binaria)
+
+  // NDCG@5 (binary relevance)
   let dcg = 0;
   let idcg = 0;
-  for (let i = 0; i < Math.min(5, resultDocs.length); i++) {
-    const doc = resultDocs[i];
-    const isRelevant = expectedDocs.includes(doc) ? 1 : 0;
-    dcg += isRelevant / Math.log2(i + 2);
-    
-    // IDCG: asumiendo que los primeros 3 son relevantes
-    if (i < 3) {
-      idcg += 1 / Math.log2(i + 2);
+  for (let i = 0; i < Math.min(5, ranked.length); i++) {
+    if (expected.includes(ranked[i])) dcg += 1 / Math.log2(i + 2);
+    if (i < numRelevant) idcg += 1 / Math.log2(i + 2);
+  }
+  const ndcg5 = idcg > 0 ? dcg / idcg : 0;
+
+  // Average Precision (AP)
+  let hits = 0;
+  let sumPrecision = 0;
+  for (let i = 0; i < ranked.length; i++) {
+    if (expected.includes(ranked[i])) {
+      hits++;
+      sumPrecision += hits / (i + 1);
     }
   }
-  const ndcg = idcg > 0 ? dcg / idcg : 0;
-  
-  return { top1, top3, top5, mrr, ndcg };
+  const ap = numRelevant > 0 ? sumPrecision / numRelevant : 0;
+
+  return { top1, top3, top5, mrr, ndcg5, precisionAt1, precisionAt3, precisionAt5, ap };
 }
 
-// Función para mostrar resultados de un test
+// ─── DISPLAY ─────────────────────────────────────────────────────────────────
+
+function bar(value, max = 1, width = 30) {
+  const filled = Math.round((value / max) * width);
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
+}
+
 function displayTestResults(testCase, results, metrics) {
-  console.log('\n' + '='.repeat(70));
+  console.log('\n' + '═'.repeat(72));
   console.log(`TEST: ${testCase.name}`);
-  console.log(`Categoría: ${testCase.category}`);
-  console.log(`Query: "${testCase.query}"`);
-  console.log('='.repeat(70));
-  
-  console.log('\n📊 MÉTRICAS:');
-  console.log(`  Top-1 Accuracy: ${(metrics.top1 * 100).toFixed(1)}%`);
-  console.log(`  Top-3 Accuracy: ${(metrics.top3 * 100).toFixed(1)}%`);
-  console.log(`  Top-5 Accuracy: ${(metrics.top5 * 100).toFixed(1)}%`);
-  console.log(`  MRR: ${metrics.mrr.toFixed(3)}`);
-  console.log(`  NDCG@5: ${metrics.ndcg.toFixed(3)}`);
-  
-  console.log('\n🎯 TOP 5 RESULTADOS:');
-  results.slice(0, 5).forEach((result, idx) => {
-    const isExpected = testCase.expectedTop3.includes(result.document);
-    const marker = isExpected ? '✅' : '❌';
-    console.log(`  ${marker} ${idx + 1}. [Score: ${result.score.toFixed(4)}] ${result.document.substring(0, 60)}...`);
+  console.log(`Category: ${testCase.category} | Query: "${testCase.query}"`);
+  console.log('─'.repeat(72));
+
+  console.log('\n  METRICS:');
+  console.log(`  P@1   ${bar(metrics.precisionAt1)} ${(metrics.precisionAt1 * 100).toFixed(0)}%`);
+  console.log(`  P@3   ${bar(metrics.precisionAt3)} ${(metrics.precisionAt3 * 100).toFixed(0)}%`);
+  console.log(`  P@5   ${bar(metrics.precisionAt5)} ${(metrics.precisionAt5 * 100).toFixed(0)}%`);
+  console.log(`  MRR   ${bar(metrics.mrr)} ${metrics.mrr.toFixed(3)}`);
+  console.log(`  NDCG5 ${bar(metrics.ndcg5)} ${metrics.ndcg5.toFixed(3)}`);
+  console.log(`  AP    ${bar(metrics.ap)} ${metrics.ap.toFixed(3)}`);
+
+  console.log('\n  TOP 5 RESULTS:');
+  results.slice(0, 5).forEach((r, i) => {
+    const mark = testCase.expectedTop3.includes(r.document) ? '✓' : '✗';
+    const doc = r.document.length > 62 ? r.document.slice(0, 62) + '…' : r.document;
+    console.log(`  ${mark} ${i + 1}. [${r.score.toFixed(4)}] ${doc}`);
   });
-  
-  console.log('\n📋 ESPERADO (Top 3):');
-  testCase.expectedTop3.forEach((doc, idx) => {
+
+  console.log('\n  EXPECTED TOP 3:');
+  testCase.expectedTop3.forEach((doc, i) => {
     const rank = results.findIndex(r => r.document === doc) + 1;
-    const found = rank > 0;
-    const marker = found ? '✅' : '❌';
-    console.log(`  ${marker} ${idx + 1}. ${doc.substring(0, 60)}... ${found ? `(Rank: ${rank})` : '(No encontrado)'}`);
+    const mark = rank > 0 ? '✓' : '✗';
+    const label = rank > 0 ? `rank ${rank}` : 'not found';
+    const d = doc.length > 58 ? doc.slice(0, 58) + '…' : doc;
+    console.log(`  ${mark} ${i + 1}. ${d} (${label})`);
   });
 }
 
-// Función principal para ejecutar todas las pruebas
+function displayCategoryChart(categoryMetrics) {
+  console.log('\n' + '═'.repeat(72));
+  console.log('ACCURACY BY CATEGORY');
+  console.log('─'.repeat(72));
+
+  const categories = Object.keys(categoryMetrics);
+  const maxLabelLen = Math.max(...categories.map(c => c.length));
+
+  categories.forEach(cat => {
+    const ms = categoryMetrics[cat];
+    const n = ms.length;
+    const map = ms.reduce((s, m) => s + m.ap, 0) / n;
+    const ndcg = ms.reduce((s, m) => s + m.ndcg5, 0) / n;
+    const mrr = ms.reduce((s, m) => s + m.mrr, 0) / n;
+
+    console.log(`\n  ${cat.toUpperCase().padEnd(maxLabelLen + 2)}(n=${n})`);
+    console.log(`    MAP   ${bar(map, 1, 36)} ${(map * 100).toFixed(1)}%`);
+    console.log(`    NDCG5 ${bar(ndcg, 1, 36)} ${(ndcg * 100).toFixed(1)}%`);
+    console.log(`    MRR   ${bar(mrr, 1, 36)} ${(mrr * 100).toFixed(1)}%`);
+  });
+}
+
+// ─── MAIN ────────────────────────────────────────────────────────────────────
+
 async function runAccuracyTests() {
-  console.log('='.repeat(70));
-  console.log('EVALUACIÓN DE ACCURACY - Reranking Service');
-  console.log('='.repeat(70));
-  console.log(`Servidor: ${SERVER_URL}`);
-  console.log(`Total de tests: ${TEST_CASES.length}`);
-  console.log(`Inicio: ${new Date().toISOString()}`);
-  console.log('='.repeat(70));
-  
+  console.log('═'.repeat(72));
+  console.log('  ACCURACY EVALUATION — RexReranker');
+  console.log('═'.repeat(72));
+  console.log(`  Server : ${SERVER_URL}`);
+  console.log(`  Tests  : ${TEST_CASES.length}`);
+  console.log(`  Start  : ${new Date().toISOString()}`);
+  console.log('═'.repeat(72));
+
   const allMetrics = [];
   const categoryMetrics = {};
-  
+  const perTestResults = [];
+
   for (let i = 0; i < TEST_CASES.length; i++) {
-    const testCase = TEST_CASES[i];
-    console.log(`\n\n[${i + 1}/${TEST_CASES.length}] Ejecutando test: ${testCase.name}...`);
-    
-    const results = await rerankRequest(testCase.query, testCase.documents);
-    
+    const tc = TEST_CASES[i];
+    process.stdout.write(`\n[${i + 1}/${TEST_CASES.length}] ${tc.name}… `);
+
+    const results = await rerankRequest(tc.query, tc.documents);
     if (!results) {
-      console.log(`❌ Error ejecutando test ${testCase.name}`);
+      console.log('FAILED');
       continue;
     }
-    
-    const metrics = calculateAccuracy(testCase, results);
+    console.log('done');
+
+    const metrics = calculateMetrics(tc, results);
     allMetrics.push(metrics);
-    
-    // Agrupar por categoría
-    if (!categoryMetrics[testCase.category]) {
-      categoryMetrics[testCase.category] = [];
-    }
-    categoryMetrics[testCase.category].push(metrics);
-    
-    displayTestResults(testCase, results, metrics);
-    
-    // Pequeña pausa entre tests
-    await new Promise(resolve => setTimeout(resolve, 500));
+
+    categoryMetrics[tc.category] = categoryMetrics[tc.category] || [];
+    categoryMetrics[tc.category].push(metrics);
+
+    perTestResults.push({
+      name: tc.name,
+      category: tc.category,
+      query: tc.query,
+      metrics,
+      top5: results.slice(0, 5).map(r => ({ document: r.document, score: r.score })),
+      expectedTop3: tc.expectedTop3
+    });
+
+    displayTestResults(tc, results, metrics);
+    await new Promise(r => setTimeout(r, 500));
   }
-  
-  // Resumen final
-  console.log('\n\n' + '='.repeat(70));
-  console.log('RESUMEN FINAL - ACCURACY');
-  console.log('='.repeat(70));
-  
-  const avgTop1 = allMetrics.reduce((sum, m) => sum + m.top1, 0) / allMetrics.length;
-  const avgTop3 = allMetrics.reduce((sum, m) => sum + m.top3, 0) / allMetrics.length;
-  const avgTop5 = allMetrics.reduce((sum, m) => sum + m.top5, 0) / allMetrics.length;
-  const avgMRR = allMetrics.reduce((sum, m) => sum + m.mrr, 0) / allMetrics.length;
-  const avgNDCG = allMetrics.reduce((sum, m) => sum + m.ndcg, 0) / allMetrics.length;
-  
-  console.log('\n📊 MÉTRICAS GLOBALES:');
-  console.log(`  Top-1 Accuracy: ${(avgTop1 * 100).toFixed(1)}%`);
-  console.log(`  Top-3 Accuracy: ${(avgTop3 * 100).toFixed(1)}%`);
-  console.log(`  Top-5 Accuracy: ${(avgTop5 * 100).toFixed(1)}%`);
-  console.log(`  MRR promedio: ${avgMRR.toFixed(3)}`);
-  console.log(`  NDCG@5 promedio: ${avgNDCG.toFixed(3)}`);
-  
-  console.log('\n📊 MÉTRICAS POR CATEGORÍA:');
-  Object.entries(categoryMetrics).forEach(([category, metrics]) => {
-    const count = metrics.length;
-    const catTop1 = metrics.reduce((sum, m) => sum + m.top1, 0) / count;
-    const catTop3 = metrics.reduce((sum, m) => sum + m.top3, 0) / count;
-    const catMRR = metrics.reduce((sum, m) => sum + m.mrr, 0) / count;
-    console.log(`\n  ${category.toUpperCase()} (${count} tests):`);
-    console.log(`    Top-1: ${(catTop1 * 100).toFixed(1)}%`);
-    console.log(`    Top-3: ${(catTop3 * 100).toFixed(1)}%`);
-    console.log(`    MRR: ${catMRR.toFixed(3)}`);
+
+  // ── Global summary ──
+  const n = allMetrics.length;
+  const avg = key => allMetrics.reduce((s, m) => s + m[key], 0) / n;
+
+  console.log('\n\n' + '═'.repeat(72));
+  console.log('  GLOBAL SUMMARY');
+  console.log('─'.repeat(72));
+  console.log(`  Tests completed : ${n}/${TEST_CASES.length}`);
+  console.log(`\n  Metric         Value   Bar`);
+  console.log('  ' + '─'.repeat(50));
+
+  const globalMetrics = {
+    'Top-1 Hit':  avg('top1'),
+    'Top-3 Hit':  avg('top3'),
+    'Top-5 Hit':  avg('top5'),
+    'P@1':        avg('precisionAt1'),
+    'P@3':        avg('precisionAt3'),
+    'P@5':        avg('precisionAt5'),
+    'MRR':        avg('mrr'),
+    'NDCG@5':     avg('ndcg5'),
+    'MAP':        avg('ap'),
+  };
+
+  Object.entries(globalMetrics).forEach(([label, value]) => {
+    console.log(`  ${label.padEnd(14)} ${(value * 100).toFixed(1).padStart(5)}%  ${bar(value, 1, 28)}`);
   });
-  
-  console.log('\n' + '='.repeat(70));
-  console.log(`Fin: ${new Date().toISOString()}`);
-  console.log('='.repeat(70));
+
+  displayCategoryChart(categoryMetrics);
+
+  // ── Save results ──
+  if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR, { recursive: true });
+
+  const output = {
+    timestamp: new Date().toISOString(),
+    server: SERVER_URL,
+    totalTests: TEST_CASES.length,
+    completed: n,
+    globalMetrics: Object.fromEntries(
+      Object.entries(globalMetrics).map(([k, v]) => [k, parseFloat(v.toFixed(4))])
+    ),
+    categoryMetrics: Object.fromEntries(
+      Object.entries(categoryMetrics).map(([cat, ms]) => {
+        const cnt = ms.length;
+        return [cat, {
+          count: cnt,
+          map:   parseFloat((ms.reduce((s, m) => s + m.ap, 0) / cnt).toFixed(4)),
+          ndcg5: parseFloat((ms.reduce((s, m) => s + m.ndcg5, 0) / cnt).toFixed(4)),
+          mrr:   parseFloat((ms.reduce((s, m) => s + m.mrr, 0) / cnt).toFixed(4)),
+          top1:  parseFloat((ms.reduce((s, m) => s + m.top1, 0) / cnt).toFixed(4)),
+          top3:  parseFloat((ms.reduce((s, m) => s + m.top3, 0) / cnt).toFixed(4)),
+        }];
+      })
+    ),
+    perTest: perTestResults
+  };
+
+  const outPath = path.join(RESULTS_DIR, 'accuracy_results.json');
+  fs.writeFileSync(outPath, JSON.stringify(output, null, 2));
+  console.log(`\n\n  Results saved → ${outPath}`);
+
+  console.log('\n' + '═'.repeat(72));
+  console.log(`  End: ${new Date().toISOString()}`);
+  console.log('═'.repeat(72));
+
+  return output;
 }
 
-// Ejecutar pruebas
 if (require.main === module) {
-  runAccuracyTests().catch(error => {
-    console.error('Error ejecutando pruebas de accuracy:', error);
+  runAccuracyTests().catch(err => {
+    console.error('Fatal error:', err);
     process.exit(1);
   });
 }
 
 module.exports = { runAccuracyTests, TEST_CASES };
-
